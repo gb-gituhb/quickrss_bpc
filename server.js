@@ -91,12 +91,14 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    await wait(2000);
+    // === INCREASED: Wait for extension to load ===
+    console.log('⏳ Waiting for extension to load...');
+    await wait(5000); // Increased from 2000ms
 
-    // === bpc-fetch: User-Agent ===
+    // Set user agent
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
 
-    // === bpc-fetch: Google Referer (NEW) ===
+    // Set Google Referer
     await page.setExtraHTTPHeaders({
       'Referer': 'https://www.google.com/'
     });
@@ -106,11 +108,10 @@ app.get('/fetch', async (req, res) => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
 
-    // === bpc-fetch: Comprehensive Script Blocking (UPDATED) ===
+    // Block tracking and paywall scripts
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const url = req.url().toLowerCase();
-      // Block ALL tracking and paywall scripts
       if (url.includes('paywall') || 
           url.includes('subscription') || 
           url.includes('cxense') ||
@@ -131,16 +132,29 @@ app.get('/fetch', async (req, res) => {
       }
     });
 
-    // Navigate
-    console.log('⏳ Navigating...');
+    // === CHANGED: Use networkidle2 for full page load ===
+    console.log('⏳ Navigating (waiting for full load)...');
     await page.goto(targetUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
+      waitUntil: 'networkidle2', // Changed from domcontentloaded
+      timeout: 60000 // Increased from 30000
     });
 
-    await wait(2000);
+    // === INCREASED: Wait for BPC to work ===
+    console.log('⏳ Waiting for BPC to bypass paywall...');
+    await wait(8000); // Increased from 2000ms
 
-    // === bpc-fetch: Combined Bypass ===
+    // Check if paywall is still present
+    const hasPaywall = await page.evaluate(() => {
+      return document.querySelector('.paywall, .subscription-wall, [class*="paywall"], [class*="metered"]') !== null;
+    });
+
+    if (hasPaywall) {
+      console.log('⚠️ Paywall still present, waiting longer...');
+      await wait(10000); // Extra time if paywall still there
+    }
+
+    // Apply bypasses
+    console.log('🔧 Applying bypasses...');
     await page.evaluate(() => {
       const url = window.location.href;
       
@@ -164,7 +178,8 @@ app.get('/fetch', async (req, res) => {
       const overlaySelectors = [
         '.paywall', '.subscription-wall', '.premium-wall', '.metered-content',
         '.gateway', '.wsj-paywall', '.bloomberg-paywall', '.ft-paywall',
-        '[class*="paywall"]', '[id*="paywall"]', '[class*="metered"]'
+        '[class*="paywall"]', '[id*="paywall"]', '[class*="metered"]',
+        '[class*="subscription"]', '[id*="subscription"]'
       ];
       overlaySelectors.forEach(selector => {
         document.querySelectorAll(selector).forEach(el => el.remove());
@@ -173,7 +188,8 @@ app.get('/fetch', async (req, res) => {
       // Unhide ALL content
       const contentSelectors = [
         '.article-content', '.post-content', '.story-content', '.content',
-        '.premium-content', 'article p', '.article-body', '.entry-content'
+        '.premium-content', 'article p', '.article-body', '.entry-content',
+        '.story-body', '.main-content'
       ];
       contentSelectors.forEach(selector => {
         document.querySelectorAll(selector).forEach(el => {
@@ -182,6 +198,7 @@ app.get('/fetch', async (req, res) => {
           el.style.opacity = '1';
           el.style.maxHeight = 'none';
           el.style.overflow = 'visible';
+          el.style.height = 'auto';
         });
       });
       
@@ -189,6 +206,7 @@ app.get('/fetch', async (req, res) => {
       document.querySelectorAll('[style*="blur"]').forEach(el => {
         el.style.filter = 'none';
         el.style.backdropFilter = 'none';
+        el.style.blur = '0px';
       });
       
       // Restore scrolling
@@ -199,30 +217,34 @@ app.get('/fetch', async (req, res) => {
       document.querySelectorAll('img').forEach(el => el.remove());
     });
 
-    await wait(3000);
+    // === INCREASED: Wait for bypass to take effect ===
+    console.log('⏳ Waiting for bypass to take effect...');
+    await wait(5000); // Increased from 3000ms
 
-    // === bpc-fetch: Check if paywall remains ===
-    const hasPaywall = await page.evaluate(() => {
-      return document.querySelector('.paywall, .subscription-wall, [class*="paywall"]') !== null;
+    // Check again if paywall was removed
+    const paywallRemoved = await page.evaluate(() => {
+      return document.querySelector('.paywall, .subscription-wall, [class*="paywall"]') === null;
     });
 
-    // === bpc-fetch: Archive Fallback (NEW) ===
-    if (hasPaywall) {
-      console.log('⚠️ Paywall detected, trying archive fallback...');
-      const archiveUrl = `https://archive.is/latest/${targetUrl}`;
+    if (paywallRemoved) {
+      console.log('✅ Paywall bypassed successfully!');
+    } else {
+      console.log('⚠️ Paywall may still be present');
       
+      // Try archive fallback
+      console.log('🔄 Trying archive fallback...');
+      const archiveUrl = `https://archive.is/latest/${targetUrl}`;
       try {
         await page.goto(archiveUrl, {
-          waitUntil: 'domcontentloaded',
+          waitUntil: 'networkidle2',
           timeout: 15000
         });
+        await wait(3000);
         
-        await wait(2000);
-        
-        // Extract content from archive
         await page.evaluate(() => {
           document.querySelectorAll('[class*="ad"], img, [class*="popup"]').forEach(el => el.remove());
         });
+        console.log('✅ Archive fallback successful');
       } catch (archiveError) {
         console.log('⚠️ Archive fallback failed');
       }
