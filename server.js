@@ -158,81 +158,142 @@ app.get('/fetch', async (req, res) => {
       }
     });
 
-    // BLOCK EVERYTHING EXCEPT TEXT - FASTER LOADING
+    // Block unnecessary resources
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const resourceType = req.resourceType();
-      // ONLY load document (HTML) and scripts (for BPC)
       if (['document', 'script', 'xhr', 'fetch'].includes(resourceType)) {
         req.continue();
       } else {
-        // Block images, media, fonts, stylesheets (they slow loading)
         req.abort();
       }
     });
 
-    // Navigate with FAST settings
-    console.log('⏳ Navigating (fast mode)...');
+    // Navigate
+    console.log('⏳ Navigating...');
     await page.goto(targetUrl, {
-      waitUntil: 'domcontentloaded', // FASTER - don't wait for all resources
-      timeout: 30000 // Reduced timeout
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
     });
 
-    // Short wait for BPC to work
+    // Wait for BPC to work
     console.log('⏳ Waiting for BPC bypass...');
     await wait(3000);
 
-    // Extract ONLY text content
-    console.log('📝 Extracting text content...');
+    // CLEAN TEXT EXTRACTION - FIXED
+    console.log('📝 Extracting clean text...');
     const textContent = await page.evaluate(() => {
-      // Try to get article content
-      const articleSelectors = [
-        'article',
-        '.article-content',
-        '.post-content',
-        '.story-content',
-        '.content',
-        '.main-content',
-        '[role="article"]',
-        '.article-body',
-        '.entry-content'
-      ];
-      
-      let content = '';
-      
-      // Try each selector
-      for (const selector of articleSelectors) {
-        const elements = document.querySelectorAll(selector);
-        if (elements.length > 0) {
-          // Get text from all matching elements
-          for (const el of elements) {
-            content += el.innerText || el.textContent || '';
-            content += '\n\n';
-          }
-          break;
-        }
-      }
-      
-      // If no article found, get main text
-      if (!content) {
-        // Remove scripts, styles, nav, footer, header
-        const removeSelectors = ['script', 'style', 'nav', 'footer', 'header', 'aside', '.ad', '.advertisement', '.cookie-banner'];
-        removeSelectors.forEach(sel => {
-          document.querySelectorAll(sel).forEach(el => el.remove());
-        });
+      // Find the main article content
+      function getArticleText() {
+        // Try common article selectors
+        const selectors = [
+          'article',
+          '.article-body',
+          '.article-content',
+          '.content--article',
+          '.post-content',
+          '.story-content',
+          '.entry-content',
+          '.main-content',
+          '#article-body',
+          '#main-content',
+          '.article__body',
+          '.article__content',
+          '.story-body',
+          '.story__body'
+        ];
         
-        // Get body text
-        content = document.body.innerText || document.body.textContent || '';
+        for (const selector of selectors) {
+          const element = document.querySelector(selector);
+          if (element) {
+            // Get all paragraphs
+            const paragraphs = element.querySelectorAll('p');
+            if (paragraphs.length > 0) {
+              return Array.from(paragraphs)
+                .map(p => p.textContent.trim())
+                .filter(text => text.length > 20) // Filter short text
+                .join('\n\n');
+            }
+            // Fallback to inner text
+            return element.innerText || element.textContent || '';
+          }
+        }
+        
+        return '';
       }
-      
-      // Clean up whitespace
-      content = content.replace(/\s+/g, ' ').trim();
-      
+
       // Get title
-      const title = document.title || '';
-      
+      function getTitle() {
+        const titleSelectors = [
+          'h1',
+          '.article-title',
+          '.headline',
+          '.story-headline',
+          '.entry-title',
+          '.post-title'
+        ];
+        
+        for (const selector of titleSelectors) {
+          const element = document.querySelector(selector);
+          if (element) {
+            return element.textContent.trim();
+          }
+        }
+        return document.title || '';
+      }
+
+      // Get author
+      function getAuthor() {
+        const authorSelectors = [
+          '.author',
+          '.byline',
+          '.article-author',
+          '.story-author',
+          '.entry-author',
+          '.post-author',
+          '[rel="author"]'
+        ];
+        
+        for (const selector of authorSelectors) {
+          const element = document.querySelector(selector);
+          if (element) {
+            return element.textContent.trim();
+          }
+        }
+        return '';
+      }
+
+      // Get date
+      function getDate() {
+        const dateSelectors = [
+          'time',
+          '.date',
+          '.published-date',
+          '.article-date',
+          '.story-date',
+          '.entry-date',
+          '.post-date',
+          '[datetime]'
+        ];
+        
+        for (const selector of dateSelectors) {
+          const element = document.querySelector(selector);
+          if (element) {
+            return element.textContent.trim() || element.getAttribute('datetime') || '';
+          }
+        }
+        return '';
+      }
+
+      const title = getTitle();
+      const author = getAuthor();
+      const date = getDate();
+      const content = getArticleText();
+
       return {
         title: title,
+        author: author,
+        date: date,
         content: content,
         url: window.location.href
       };
@@ -241,11 +302,9 @@ app.get('/fetch', async (req, res) => {
     console.log(`✅ Extracted ${textContent.content.length} characters`);
     console.log(`📄 Title: ${textContent.title}`);
 
-    // Close browser
     await browser.close();
     isProcessing = false;
 
-    // Return JSON with text content (smaller, faster)
     res.setHeader('Content-Type', 'application/json');
     res.json(textContent);
   } catch (error) {
