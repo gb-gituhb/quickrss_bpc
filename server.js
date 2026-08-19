@@ -95,15 +95,13 @@ app.get('/fetch', async (req, res) => {
     // Wait for extension to load
     await wait(2000);
     
-    // Better extension detection
+    // Extension detection
     const targets = await browser.targets();
     let extensionId = null;
     let extensionFound = false;
     
     for (const target of targets) {
       const url = target.url();
-      console.log('📋 Target URL:', url);
-      
       if (url.startsWith('chrome-extension://')) {
         const match = url.match(/chrome-extension:\/\/([^\/]+)/);
         if (match) {
@@ -116,25 +114,7 @@ app.get('/fetch', async (req, res) => {
     }
     
     if (!extensionFound) {
-      console.log('⚠️ Extension not found in targets, trying again...');
-      await wait(3000);
-      const allTargets = await browser.targets();
-      for (const target of allTargets) {
-        const url = target.url();
-        if (url.startsWith('chrome-extension://')) {
-          const match = url.match(/chrome-extension:\/\/([^\/]+)/);
-          if (match) {
-            extensionId = match[1];
-            extensionFound = true;
-            console.log(`🔌 Extension found on second attempt: ${extensionId}`);
-            break;
-          }
-        }
-      }
-    }
-
-    if (!extensionFound) {
-      console.log('⚠️ Extension not loaded, continuing without extension ID');
+      console.log('⚠️ Extension not found, continuing...');
     }
 
     // Set user agent
@@ -178,67 +158,103 @@ app.get('/fetch', async (req, res) => {
       }
     });
 
-    // Block unnecessary resources
+    // BLOCK EVERYTHING EXCEPT TEXT - FASTER LOADING
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const resourceType = req.resourceType();
-      if (['image', 'media', 'font'].includes(resourceType)) {
-        req.abort();
-      } else {
+      // ONLY load document (HTML) and scripts (for BPC)
+      if (['document', 'script', 'xhr', 'fetch'].includes(resourceType)) {
         req.continue();
+      } else {
+        // Block images, media, fonts, stylesheets (they slow loading)
+        req.abort();
       }
     });
 
-    // Navigate
-    console.log('⏳ Navigating...');
+    // Navigate with FAST settings
+    console.log('⏳ Navigating (fast mode)...');
     await page.goto(targetUrl, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
+      waitUntil: 'domcontentloaded', // FASTER - don't wait for all resources
+      timeout: 30000 // Reduced timeout
     });
 
-    // Wait for Cloudflare
-    console.log('⏳ Waiting for Cloudflare bypass...');
-    await wait(5000);
+    // Short wait for BPC to work
+    console.log('⏳ Waiting for BPC bypass...');
+    await wait(3000);
 
-    // Check for Cloudflare
-    const pageContent = await page.content();
-    const hasCloudflare = pageContent.includes('cf-wrapper') || 
-                         pageContent.includes('challenge-form') ||
-                         pageContent.includes('cf-browser-verification') ||
-                         pageContent.includes('cloudflare') ||
-                         pageContent.includes('Are you a robot');
-
-    if (hasCloudflare) {
-      console.log('⚠️ Cloudflare detected, waiting for bypass...');
-      await wait(10000);
+    // Extract ONLY text content
+    console.log('📝 Extracting text content...');
+    const textContent = await page.evaluate(() => {
+      // Try to get article content
+      const articleSelectors = [
+        'article',
+        '.article-content',
+        '.post-content',
+        '.story-content',
+        '.content',
+        '.main-content',
+        '[role="article"]',
+        '.article-body',
+        '.entry-content'
+      ];
       
-      await page.evaluate(() => {
-        const buttons = document.querySelectorAll('button, input[type="submit"]');
-        buttons.forEach(btn => {
-          const text = btn.textContent.toLowerCase();
-          if (text.includes('verify') || text.includes('continue') || text.includes('click')) {
-            btn.click();
+      let content = '';
+      
+      // Try each selector
+      for (const selector of articleSelectors) {
+        const elements = document.querySelectorAll(selector);
+        if (elements.length > 0) {
+          // Get text from all matching elements
+          for (const el of elements) {
+            content += el.innerText || el.textContent || '';
+            content += '\n\n';
           }
-        });
-      });
+          break;
+        }
+      }
       
-      await wait(5000);
-    }
+      // If no article found, get main text
+      if (!content) {
+        // Remove scripts, styles, nav, footer, header
+        const removeSelectors = ['script', 'style', 'nav', 'footer', 'header', 'aside', '.ad', '.advertisement', '.cookie-banner'];
+        removeSelectors.forEach(sel => {
+          document.querySelectorAll(sel).forEach(el => el.remove());
+        });
+        
+        // Get body text
+        content = document.body.innerText || document.body.textContent || '';
+      }
+      
+      // Clean up whitespace
+      content = content.replace(/\s+/g, ' ').trim();
+      
+      // Get title
+      const title = document.title || '';
+      
+      return {
+        title: title,
+        content: content,
+        url: window.location.href
+      };
+    });
 
-    // Get content
-    const content = await page.content();
+    console.log(`✅ Extracted ${textContent.content.length} characters`);
+    console.log(`📄 Title: ${textContent.title}`);
+
+    // Close browser
     await browser.close();
     isProcessing = false;
 
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(content);
+    // Return JSON with text content (smaller, faster)
+    res.setHeader('Content-Type', 'application/json');
+    res.json(textContent);
   } catch (error) {
     console.error('❌ Error:', error.message);
     if (browser) {
       await browser.close().catch(() => {});
     }
     isProcessing = false;
-    res.status(500).send(`Error: ${error.message}`);
+    res.status(500).json({ error: error.message });
   }
 });
 
