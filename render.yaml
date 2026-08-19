@@ -5,8 +5,6 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    # ✅ REMOVE startCommand - let Dockerfile handle it
-    # ✅ REMOVE NODE_OPTIONS from envVars - Dockerfile handles it
     envVars:
       - key: NODE_ENV
         value: production
