@@ -1,63 +1,73 @@
 const express = require('express');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const { connect } = require('puppeteer-real-browser');
 const path = require('path');
-
-puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-chrome-clean-master');
 
+let isProcessing = false;
+
 app.get('/', (req, res) => {
-  res.status(200).send('QuickRSS BPC Proxy Service is active. Send requests to /fetch?url=YOUR_ENCODED_URL');
+  res.status(200).send('Active');
 });
 
 app.get('/fetch', async (req, res) => {
   const targetUrl = req.query.url;
+  
   if (!targetUrl) {
-    return res.status(400).send('Missing url parameter. Usage: /fetch?url=https://example.com');
+    return res.status(400).send('Missing url parameter.');
   }
 
-  let browser;
+  if (isProcessing) {
+    return res.status(429).send('Server is busy processing another request. Please retry in 10 seconds.');
+  }
+
+  isProcessing = true;
+  let browser, page;
+
   try {
-    browser = await puppeteer.launch({
-      executablePath: '/usr/bin/chromium',
-      headless: true,
+    const response = await connect({
+      headless: false,
+      turnstile: true,
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-infobars',
-        '--start-maximized',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
         '--single-process',
-        '--js-flags="--max-old-space-size=256"'
+        '--no-zygote',
+        '--js-flags="--max-old-space-size=128"'
       ],
-      ignoreDefaultArgs: ['--enable-automation']
+      customConfig: {
+        chromePath: '/usr/bin/chromium'
+      }
     });
 
-    const page = await browser.newPage();
-    
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
+    browser = response.browser;
+    page = response.page;
+
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      if (['image', 'media', 'font'].includes(req.resourceType())) {
+        req.abort();
+      } else {
+        req.continue();
+      }
     });
 
     await page.goto(targetUrl, {
-      waitUntil: 'networkidle2',
-      timeout: 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 45000
     });
 
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    await new Promise(resolve => setTimeout(resolve, 6000));
 
     const content = await page.content();
     await browser.close();
+    isProcessing = false;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(content);
@@ -65,10 +75,9 @@ app.get('/fetch', async (req, res) => {
     if (browser) {
       await browser.close().catch(() => {});
     }
-    res.status(500).send(`Error fetching page: ${error.message}`);
+    isProcessing = false;
+    res.status(500).send(error.message);
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT);
