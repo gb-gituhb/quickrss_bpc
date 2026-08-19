@@ -1,0 +1,22 @@
+# .dockerignore
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+.DS_Store
+*.md
+*.log
+.idea
+.vscode
+coverage
+.nyc_output
+dist
+build
+*.zip
+*.tar.gz
+Dockerfile
+.dockerignore
+.gitlab-ci.yml
+.github
+README.md
