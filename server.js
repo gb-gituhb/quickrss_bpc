@@ -92,11 +92,11 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    // FIX 1: BETTER EXTENSION LOADING - Wait and retry
+    // Wait for extension to load
     console.log('⏳ Waiting for extension to load...');
     await wait(3000);
     
-    // Try multiple times to find extension
+    // Extension detection
     let extensionId = null;
     let extensionFound = false;
     let attempts = 0;
@@ -104,8 +104,6 @@ app.get('/fetch', async (req, res) => {
     
     while (!extensionFound && attempts < maxAttempts) {
       attempts++;
-      console.log(`📋 Attempt ${attempts} to find extension...`);
-      
       const targets = await browser.targets();
       for (const target of targets) {
         const url = target.url();
@@ -119,25 +117,22 @@ app.get('/fetch', async (req, res) => {
           }
         }
       }
-      
       if (!extensionFound && attempts < maxAttempts) {
-        console.log('⏳ Extension not found, waiting and retrying...');
         await wait(2000);
       }
     }
 
     if (!extensionFound) {
-      console.log('⚠️ Extension not loaded, but continuing anyway...');
+      console.log('⚠️ Extension not loaded, continuing...');
     }
 
-    // FIX 2: ENHANCED STEALTH - Better Cloudflare bypass
+    // Set user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
+    // Enhanced stealth
     await page.evaluateOnNewDocument(() => {
-      // Remove webdriver
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
       
-      // Override navigator properties
       Object.defineProperty(navigator, 'plugins', { 
         get: () => {
           const plugins = [
@@ -155,7 +150,6 @@ app.get('/fetch', async (req, res) => {
       Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
       Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
       
-      // Mock chrome
       window.chrome = { 
         runtime: { 
           id: 'test',
@@ -163,7 +157,6 @@ app.get('/fetch', async (req, res) => {
         } 
       };
       
-      // Override permissions
       const originalQuery = window.navigator.permissions?.query;
       if (originalQuery) {
         window.navigator.permissions.query = (parameters) => (
@@ -174,16 +167,15 @@ app.get('/fetch', async (req, res) => {
       }
     });
 
-    // FIX 3: SMART RESOURCE BLOCKING - Allow styles/fonts, block heavy content
+    // CRITICAL FIX: ALLOW EVERYTHING EXCEPT IMAGES AND VIDEOS
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const resourceType = req.resourceType();
-      // Allow: HTML, JS, CSS, Fonts, XHR (for dynamic content)
-      // Block: Images, Media, Video (heavy)
-      if (['document', 'script', 'stylesheet', 'font', 'xhr', 'fetch'].includes(resourceType)) {
-        req.continue();
-      } else {
+      // Block ONLY heavy resources
+      if (['image', 'media', 'video', 'eventsource', 'websocket'].includes(resourceType)) {
         req.abort();
+      } else {
+        req.continue(); // Allow everything else: CSS, Fonts, JS, XHR
       }
     });
 
@@ -194,52 +186,36 @@ app.get('/fetch', async (req, res) => {
       timeout: 45000
     });
 
-    // FIX 4: BETTER CLOUDFLARE HANDLING
-    console.log('⏳ Checking for Cloudflare...');
+    // Wait for BPC to work
+    console.log('⏳ Waiting for BPC bypass...');
     await wait(3000);
 
     // Check for Cloudflare
     const pageContent = await page.content();
     const hasCloudflare = pageContent.includes('cf-wrapper') || 
                          pageContent.includes('challenge-form') ||
-                         pageContent.includes('cf-browser-verification') ||
-                         pageContent.includes('cloudflare') ||
                          pageContent.includes('Are you a robot');
 
     if (hasCloudflare) {
       console.log('⚠️ Cloudflare detected! Waiting for bypass...');
-      
-      // Wait longer for Cloudflare
       await wait(15000);
       
-      // Try to click verify button
       await page.evaluate(() => {
         const buttons = document.querySelectorAll('button, input[type="submit"]');
         buttons.forEach(btn => {
           const text = btn.textContent.toLowerCase();
-          if (text.includes('verify') || text.includes('continue') || text.includes('click')) {
+          if (text.includes('verify') || text.includes('continue')) {
             btn.click();
           }
         });
       });
       
       await wait(5000);
-      
-      // Check again if bypass worked
-      const updatedContent = await page.content();
-      const stillHasCloudflare = updatedContent.includes('cf-wrapper') || 
-                                updatedContent.includes('Are you a robot');
-      
-      if (stillHasCloudflare) {
-        console.log('⚠️ Cloudflare still present after bypass attempt');
-      } else {
-        console.log('✅ Cloudflare bypassed successfully!');
-      }
     } else {
       console.log('✅ No Cloudflare detected');
     }
 
-    // FIX 5: CLEAN UP PAGE - Remove clutter but keep styling
+    // ONLY REMOVE ADS AND POPUPS - KEEP EVERYTHING ELSE
     await page.evaluate(() => {
       // Remove ads
       document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"]').forEach(el => el.remove());
@@ -247,28 +223,25 @@ app.get('/fetch', async (req, res) => {
       // Remove popups
       document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => el.remove());
       
-      // Remove newsletter signups
-      document.querySelectorAll('[class*="newsletter"], [class*="signup"], [class*="subscribe"]').forEach(el => el.remove());
+      // Remove newsletter signups (but keep the text content)
+      document.querySelectorAll('[class*="newsletter"], [class*="signup"]').forEach(el => el.remove());
       
       // Remove cookie notices
       document.querySelectorAll('[class*="cookie"], [id*="cookie"]').forEach(el => el.remove());
-      
-      // Remove floating elements
-      document.querySelectorAll('[class*="floating"], [class*="sticky"]').forEach(el => el.remove());
     });
 
-    // Get the clean HTML
-    console.log('📝 Extracting clean HTML...');
-    const cleanHtml = await page.content();
+    // Get the FULL HTML with ALL styles preserved
+    console.log('📝 Extracting full HTML with styles...');
+    const htmlContent = await page.content();
 
-    console.log(`✅ Extracted ${cleanHtml.length} characters`);
+    console.log(`✅ Extracted ${htmlContent.length} characters`);
 
     await browser.close();
     isProcessing = false;
 
     // Return styled HTML
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(cleanHtml);
+    res.send(htmlContent);
   } catch (error) {
     console.error('❌ Error:', error.message);
     if (browser) {
