@@ -35,9 +35,167 @@ app.get('/fetch', async (req, res) => {
 
   isProcessing = true;
   let browser, page;
+  let contentRetrieved = false;
 
   try {
     console.log(`🌐 Fetching: ${targetUrl}`);
+
+    // === ARCHIVE-FIRST STRATEGY ===
+    console.log('📚 Trying archive-first approach...');
+    
+    const archiveUrls = [
+      `https://archive.is/${targetUrl}`,
+      `https://archive.ph/${targetUrl}`,
+      `https://web.archive.org/web/2/${targetUrl}`
+    ];
+
+    let archiveContent = null;
+
+    for (const archiveUrl of archiveUrls) {
+      try {
+        console.log(`📚 Trying: ${archiveUrl}`);
+        
+        const response = await fetch(archiveUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+          }
+        });
+        
+        if (response.ok) {
+          const html = await response.text();
+          
+          // Check if archive actually has content (not an error page)
+          if (!html.includes('does not exist') && !html.includes('Not Found') && html.length > 5000) {
+            archiveContent = html;
+            console.log(`✅ Archive found at: ${archiveUrl}`);
+            contentRetrieved = true;
+            break;
+          }
+        }
+      } catch (archiveError) {
+        console.log(`⚠️ Archive failed: ${archiveUrl}`);
+      }
+    }
+
+    // If archive worked, clean and return it
+    if (archiveContent) {
+      console.log('📝 Cleaning archive content...');
+      
+      // We need to launch browser to clean the archive content properly
+      const response = await connect({
+        headless: false,
+        turnstile: true,
+        fingerprint: true,
+        args: [
+          `--disable-extensions-except=${EXTENSION_PATH}`,
+          `--load-extension=${EXTENSION_PATH}`,
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--single-process',
+          '--no-zygote',
+          '--js-flags="--max-old-space-size=128"',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-breakpad',
+          '--disable-client-side-phishing-detection',
+          '--disable-default-apps',
+          '--disable-hang-monitor',
+          '--disable-ipc-flooding-protection',
+          '--disable-popup-blocking',
+          '--disable-prompt-on-repost',
+          '--disable-renderer-backgrounding',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--no-first-run',
+          '--password-store=basic',
+          '--use-mock-keychain',
+          '--disable-web-security',
+          '--disable-features=BlockInsecurePrivateNetworkRequests',
+          '--disable-jit',
+          '--disable-accelerated-2d-canvas',
+          '--disable-accelerated-jpeg-decoding',
+          '--disable-accelerated-mjpeg-decode',
+          '--disable-accelerated-video-decode'
+        ],
+        customConfig: {
+          chromePath: '/usr/bin/chromium',
+          ignoreHTTPSErrors: true,
+          defaultViewport: {
+            width: 1024,
+            height: 600
+          }
+        }
+      });
+
+      browser = response.browser;
+      page = response.page;
+
+      // Load the archive content
+      await page.setContent(archiveContent, {
+        waitUntil: 'domcontentloaded'
+      });
+
+      await wait(2000);
+
+      // Clean archive content
+      await page.evaluate(() => {
+        // Remove archive-specific elements
+        document.querySelectorAll('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').forEach(el => el.remove());
+        
+        // Remove images
+        document.querySelectorAll('img').forEach(el => el.remove());
+        
+        // Extract main content - archives usually have it in a container
+        const contentSelectors = [
+          '.article-content', '.post-content', '.story-content', '.content',
+          'article', '.main-content', '.entry-content', '.story-body',
+          '.article-body', '#content', '.body-content'
+        ];
+        
+        let contentFound = false;
+        for (const selector of contentSelectors) {
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            elements.forEach(el => {
+              el.style.display = 'block';
+              el.style.visibility = 'visible';
+              el.style.maxHeight = 'none';
+              el.style.overflow = 'visible';
+            });
+            contentFound = true;
+            break;
+          }
+        }
+        
+        // If no content container found, try to find the largest text block
+        if (!contentFound) {
+          const paragraphs = document.querySelectorAll('p');
+          if (paragraphs.length > 3) {
+            paragraphs.forEach(p => {
+              p.style.display = 'block';
+              p.style.visibility = 'visible';
+            });
+          }
+        }
+      });
+
+      const cleanHtml = await page.content();
+      
+      await page.close().catch(() => {});
+      await browser.close().catch(() => {});
+      forceGC();
+      
+      isProcessing = false;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(cleanHtml);
+    }
+
+    // === FALLBACK TO BPC IF ARCHIVE FAILS ===
+    console.log('📚 Archive failed, falling back to BPC...');
 
     const response = await connect({
       headless: false,
@@ -91,9 +249,9 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    // === INCREASED: Wait for extension to load ===
+    // Wait for extension
     console.log('⏳ Waiting for extension to load...');
-    await wait(5000); // Increased from 2000ms
+    await wait(3000);
 
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
@@ -132,25 +290,24 @@ app.get('/fetch', async (req, res) => {
       }
     });
 
-    // === CHANGED: Use networkidle2 for full page load ===
-    console.log('⏳ Navigating (waiting for full load)...');
+    // Navigate
+    console.log('⏳ Navigating...');
     await page.goto(targetUrl, {
-      waitUntil: 'networkidle2', // Changed from domcontentloaded
-      timeout: 60000 // Increased from 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 45000
     });
 
-    // === INCREASED: Wait for BPC to work ===
+    // Wait for BPC
     console.log('⏳ Waiting for BPC to bypass paywall...');
-    await wait(8000); // Increased from 2000ms
+    await wait(5000);
 
-    // Check if paywall is still present
+    // Check if paywall is present
     const hasPaywall = await page.evaluate(() => {
       return document.querySelector('.paywall, .subscription-wall, [class*="paywall"], [class*="metered"]') !== null;
     });
 
     if (hasPaywall) {
-      console.log('⚠️ Paywall still present, waiting longer...');
-      await wait(10000); // Extra time if paywall still there
+      console.log('⚠️ Paywall still present, applying bypasses...');
     }
 
     // Apply bypasses
@@ -217,11 +374,10 @@ app.get('/fetch', async (req, res) => {
       document.querySelectorAll('img').forEach(el => el.remove());
     });
 
-    // === INCREASED: Wait for bypass to take effect ===
-    console.log('⏳ Waiting for bypass to take effect...');
-    await wait(5000); // Increased from 3000ms
+    // Wait for bypass to take effect
+    await wait(3000);
 
-    // Check again if paywall was removed
+    // Check if paywall was removed
     const paywallRemoved = await page.evaluate(() => {
       return document.querySelector('.paywall, .subscription-wall, [class*="paywall"]') === null;
     });
@@ -230,24 +386,6 @@ app.get('/fetch', async (req, res) => {
       console.log('✅ Paywall bypassed successfully!');
     } else {
       console.log('⚠️ Paywall may still be present');
-      
-      // Try archive fallback
-      console.log('🔄 Trying archive fallback...');
-      const archiveUrl = `https://archive.is/latest/${targetUrl}`;
-      try {
-        await page.goto(archiveUrl, {
-          waitUntil: 'networkidle2',
-          timeout: 15000
-        });
-        await wait(3000);
-        
-        await page.evaluate(() => {
-          document.querySelectorAll('[class*="ad"], img, [class*="popup"]').forEach(el => el.remove());
-        });
-        console.log('✅ Archive fallback successful');
-      } catch (archiveError) {
-        console.log('⚠️ Archive fallback failed');
-      }
     }
 
     const htmlContent = await page.content();
@@ -281,4 +419,5 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`✅ BPC Extension path: ${EXTENSION_PATH}`);
   console.log(`⚠️ Memory limit: 512MB`);
+  console.log(`📚 Archive-first mode enabled`);
 });
