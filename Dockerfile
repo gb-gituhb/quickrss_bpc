@@ -3,6 +3,7 @@ FROM node:18-slim
 RUN apt-get update && apt-get install -y \
     chromium \
     xvfb \
+    xauth \
     ca-certificates \
     fonts-liberation \
     libappindicator3-1 \
