@@ -86,14 +86,11 @@ app.get('/fetch', async (req, res) => {
     if (archiveContent) {
       console.log('📝 Cleaning archive content...');
       
-      // Clean with cheerio (NO BROWSER)
       try {
         const $ = cheerio.load(archiveContent);
         
-        // Remove paywalls
         $('.paywall, .subscription-wall, .premium-wall, .metered-content, .gateway, [class*="paywall"], [id*="paywall"]').remove();
         
-        // Show content
         const contentSelectors = [
           '.article-content', '.post-content', '.story-content', '.content',
           'article', '.main-content', '.entry-content', '.story-body',
@@ -113,7 +110,6 @@ app.get('/fetch', async (req, res) => {
           $('p').css('display', 'block');
         }
         
-        // Remove images and ads
         $('img').remove();
         $('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').remove();
         
@@ -125,7 +121,6 @@ app.get('/fetch', async (req, res) => {
         return res.send(cleanHtml);
       } catch (cleanError) {
         console.log('⚠️ Cheerio cleaning failed, falling back to browser:', cleanError.message);
-        // Fall through to browser-based cleaning
       }
     }
 
@@ -133,7 +128,7 @@ app.get('/fetch', async (req, res) => {
     console.log('📚 Archive failed, falling back to BPC...');
 
     const response = await connect({
-      headless: false,
+      headless: true,  // FIX: Use headless mode
       turnstile: true,
       fingerprint: true,
       args: [
@@ -143,7 +138,6 @@ app.get('/fetch', async (req, res) => {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--single-process',
         '--no-zygote',
         '--js-flags="--max-old-space-size=128"',
         '--disable-blink-features=AutomationControlled',
@@ -169,9 +163,7 @@ app.get('/fetch', async (req, res) => {
         '--disable-accelerated-2d-canvas',
         '--disable-accelerated-jpeg-decoding',
         '--disable-accelerated-mjpeg-decode',
-        '--disable-accelerated-video-decode',
-        '--remote-debugging-port=9222',
-        '--remote-debugging-address=0.0.0.0'
+        '--disable-accelerated-video-decode'
       ],
       customConfig: {
         chromePath: '/usr/bin/chromium',
