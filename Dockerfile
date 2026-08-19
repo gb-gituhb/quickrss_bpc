@@ -1,6 +1,6 @@
-FROM node:18-slim
+FROM node:22-slim
 
-# ===== INSTALL DEPENDENCIES (including wget and unzip) =====
+# ===== INSTALL DEPENDENCIES =====
 RUN apt-get update && apt-get install -y \
     chromium \
     xvfb \
@@ -28,8 +28,6 @@ ENV CHROME_PATH=/usr/bin/chromium
 
 # ===== APP SETUP =====
 WORKDIR /app
-
-# Copy package files first (better layer caching)
 COPY package*.json ./
 
 # Unset NODE_OPTIONS during install to avoid errors
@@ -44,7 +42,7 @@ RUN mkdir -p bpc_extension && \
 # Copy source code
 COPY . .
 
-# ===== CREATE NON-ROOT USER (Security) =====
+# ===== CREATE NON-ROOT USER =====
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app
 USER appuser
