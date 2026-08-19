@@ -9,6 +9,9 @@ const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-ch
 
 let isProcessing = false;
 
+// Helper function for waiting
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Verify extension exists
 function verifyExtension() {
   const manifestPath = path.join(EXTENSION_PATH, 'manifest.json');
@@ -73,8 +76,8 @@ app.get('/fetch', async (req, res) => {
         '--no-first-run',
         '--password-store=basic',
         '--use-mock-keychain',
-        '--disable-web-security', // ADDED: Helps with some sites
-        '--disable-features=BlockInsecurePrivateNetworkRequests' // ADDED
+        '--disable-web-security',
+        '--disable-features=BlockInsecurePrivateNetworkRequests'
       ],
       customConfig: {
         chromePath: '/usr/bin/chromium',
@@ -89,9 +92,10 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    // FIXED: Better extension detection
-    await page.waitForTimeout(2000); // Wait for extension to load
+    // Wait for extension to load
+    await wait(2000);
     
+    // Better extension detection
     const targets = await browser.targets();
     let extensionId = null;
     let extensionFound = false;
@@ -100,7 +104,6 @@ app.get('/fetch', async (req, res) => {
       const url = target.url();
       console.log('📋 Target URL:', url);
       
-      // Look for extension pages
       if (url.startsWith('chrome-extension://')) {
         const match = url.match(/chrome-extension:\/\/([^\/]+)/);
         if (match) {
@@ -112,12 +115,9 @@ app.get('/fetch', async (req, res) => {
       }
     }
     
-    // If not found, try to get extension pages
     if (!extensionFound) {
-      console.log('⚠️ Extension not found in targets, trying to access extension page...');
-      
-      // Try to list all targets again after some time
-      await page.waitForTimeout(3000);
+      console.log('⚠️ Extension not found in targets, trying again...');
+      await wait(3000);
       const allTargets = await browser.targets();
       for (const target of allTargets) {
         const url = target.url();
@@ -142,10 +142,8 @@ app.get('/fetch', async (req, res) => {
 
     // Enhanced stealth
     await page.evaluateOnNewDocument(() => {
-      // Remove webdriver
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
       
-      // Override navigator properties
       Object.defineProperty(navigator, 'plugins', { 
         get: () => {
           const plugins = [
@@ -163,7 +161,6 @@ app.get('/fetch', async (req, res) => {
       Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
       Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
       
-      // Mock chrome
       window.chrome = { 
         runtime: { 
           id: 'test',
@@ -171,7 +168,6 @@ app.get('/fetch', async (req, res) => {
         } 
       };
       
-      // Override permissions
       const originalQuery = window.navigator.permissions?.query;
       if (originalQuery) {
         window.navigator.permissions.query = (parameters) => (
@@ -197,12 +193,12 @@ app.get('/fetch', async (req, res) => {
     console.log('⏳ Navigating...');
     await page.goto(targetUrl, {
       waitUntil: 'networkidle2',
-      timeout: 60000 // Increased for Cloudflare
+      timeout: 60000
     });
 
     // Wait for Cloudflare
     console.log('⏳ Waiting for Cloudflare bypass...');
-    await page.waitForTimeout(5000);
+    await wait(5000);
 
     // Check for Cloudflare
     const pageContent = await page.content();
@@ -214,9 +210,8 @@ app.get('/fetch', async (req, res) => {
 
     if (hasCloudflare) {
       console.log('⚠️ Cloudflare detected, waiting for bypass...');
-      await page.waitForTimeout(10000);
+      await wait(10000);
       
-      // Try to solve
       await page.evaluate(() => {
         const buttons = document.querySelectorAll('button, input[type="submit"]');
         buttons.forEach(btn => {
@@ -227,7 +222,7 @@ app.get('/fetch', async (req, res) => {
         });
       });
       
-      await page.waitForTimeout(5000);
+      await wait(5000);
     }
 
     // Get content
