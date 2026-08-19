@@ -1,417 +1,91 @@
-const express = require('express');
-const { connect } = require('puppeteer-real-browser');
-const path = require('path');
-const dns = require('dns');
-
-dns.setDefaultResultOrder('ipv4first');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-chrome-clean-master');
-
-let isProcessing = false;
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-const forceGC = () => {
-  if (global.gc) {
-    try {
-      global.gc();
-      console.log('🧹 GC triggered');
-    } catch (e) {}
-  }
-};
-
-app.get('/', (req, res) => {
-  res.status(200).send('Active');
-});
-
 app.get('/fetch', async (req, res) => {
-  let targetUrl = req.query.url;
-  
-  if (!targetUrl) {
-    return res.status(400).send('Missing url parameter.');
-  }
+  // ... URL cleaning code ...
 
-  // ===== AGGRESSIVE URL CLEANING =====
-  let cleanUrl = targetUrl;
+  // ===== DETECT KOREADER =====
+  const userAgent = req.headers['user-agent'] || '';
+  const isKOReader = userAgent.toLowerCase().includes('koreader');
+  console.log(`📱 User-Agent: ${userAgent}`);
+  console.log(`📱 isKOReader: ${isKOReader}`);
 
-  if (Array.isArray(cleanUrl)) {
-    console.log(`📦 URL is an array with ${cleanUrl.length} items`);
-    cleanUrl = cleanUrl.join('');
-    console.log(`🔧 Joined array to: ${cleanUrl}`);
-  }
+  // ... rest of code ...
 
-  if (typeof cleanUrl === 'object' && cleanUrl !== null) {
-    console.log(`📦 URL is an object, extracting...`);
-    if (cleanUrl.url) cleanUrl = cleanUrl.url;
-    else if (cleanUrl[0]) cleanUrl = cleanUrl[0];
-    else cleanUrl = String(cleanUrl || '');
-  }
-
-  if (typeof cleanUrl !== 'string') {
-    console.error(`❌ URL is not a string: ${typeof cleanUrl}`);
-    cleanUrl = String(cleanUrl || '');
-  }
-
-  console.log(`📝 Raw URL: ${cleanUrl}`);
-
-  cleanUrl = cleanUrl.replace(/^\?step=\d+,/, '');
-  cleanUrl = cleanUrl.replace(/^[^:]+:\/\/[^,]+,\s*/, '');
-
-  if (cleanUrl.includes('?step=') || cleanUrl.includes('step=')) {
-    const match = cleanUrl.match(/https?:\/\/[^\s,]+/);
-    if (match) {
-      cleanUrl = match[0];
-      console.log(`🔧 Extracted URL from malformed string: ${cleanUrl}`);
-    }
-  }
-
-  try {
-    cleanUrl = decodeURIComponent(cleanUrl);
-  } catch (e) {
-    console.log(`⚠️ URL decode failed: ${e.message}`);
-  }
-
-  cleanUrl = cleanUrl.replace(/[,\s]+$/, '');
-
-  try {
-    new URL(cleanUrl);
-  } catch (e) {
-    console.error(`❌ Invalid URL after cleaning: ${cleanUrl}`);
-    console.error(`❌ Original was: ${targetUrl}`);
-    return res.status(400).send('Invalid URL format.');
-  }
-
-  console.log(`✅ Clean URL: ${cleanUrl}`);
-
-  if (isProcessing) {
-    return res.status(429).send('Server is busy. Please retry.');
-  }
-
-  isProcessing = true;
-  let browser, page;
-
-  try {
-    console.log(`🌐 Fetching: ${cleanUrl}`);
-
-    // === ARCHIVE-FIRST ===
-    console.log('📚 Trying archive-first approach...');
-    const archiveUrls = [
-      `https://web.archive.org/web/2/${cleanUrl}`,
-      `https://web.archive.org/web/20260819000000/${cleanUrl}`,
-      `https://web.archive.org/web/20260818000000/${cleanUrl}`
-    ];
-
-    let archiveContent = null;
-
-    for (const archiveUrl of archiveUrls) {
-      try {
-        console.log(`📚 Trying: ${archiveUrl}`);
-        const response = await fetch(archiveUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' },
-          signal: AbortSignal.timeout(10000)
-        });
-        if (response.ok) {
-          const html = await response.text();
-          if (!html.includes('does not exist') && !html.includes('Not Found') && !html.includes('404') && html.length > 5000) {
-            archiveContent = html;
-            console.log(`✅ Archive found at: ${archiveUrl}`);
-            break;
+  // After getting htmlContent, check if it's KOReader
+  if (isKOReader) {
+    // Extract text for KOReader
+    const textContent = await page.evaluate(() => {
+      const paragraphs = document.querySelectorAll('p, .article-body p, .content p, .story-body p, .article-content p');
+      let text = '';
+      const seen = new Set();
+      
+      paragraphs.forEach(p => {
+        const content = p.textContent ? p.textContent.trim() : '';
+        if (content && content.length > 20 && !seen.has(content)) {
+          seen.add(content);
+          if (!content.includes('Continue Reading') && 
+              !content.includes('Continue reading') &&
+              !content.includes('Read more') &&
+              !content.includes('Sign up') &&
+              !content.includes('Subscribe') &&
+              !content.includes('Newsletter')) {
+            text += '<p>' + content + '</p>';
           }
-        }
-      } catch (archiveError) {
-        console.log(`⚠️ Archive failed: ${archiveUrl} - ${archiveError.message}`);
-      }
-    }
-
-    if (archiveContent) {
-      console.log('📝 Cleaning archive content...');
-      const response = await connect({
-        headless: false,
-        turnstile: true,
-        fingerprint: true,
-        args: [
-          `--disable-extensions-except=${EXTENSION_PATH}`,
-          `--load-extension=${EXTENSION_PATH}`,
-          '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-          '--single-process', '--no-zygote', '--js-flags="--max-old-space-size=128"',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-          '--disable-breakpad', '--disable-client-side-phishing-detection', '--disable-default-apps',
-          '--disable-hang-monitor', '--disable-ipc-flooding-protection', '--disable-popup-blocking',
-          '--disable-prompt-on-repost', '--disable-renderer-backgrounding', '--disable-sync',
-          '--metrics-recording-only', '--no-first-run', '--password-store=basic', '--use-mock-keychain',
-          '--disable-web-security', '--disable-features=BlockInsecurePrivateNetworkRequests',
-          '--disable-jit', '--disable-accelerated-2d-canvas', '--disable-accelerated-jpeg-decoding',
-          '--disable-accelerated-mjpeg-decode', '--disable-accelerated-video-decode'
-        ],
-        customConfig: {
-          chromePath: '/usr/bin/chromium',
-          ignoreHTTPSErrors: true,
-          defaultViewport: { width: 1024, height: 600 }
         }
       });
-
-      browser = response.browser;
-      page = response.page;
-      await page.setContent(archiveContent, { waitUntil: 'domcontentloaded' });
-      await wait(2000);
-      await page.evaluate(() => {
-        document.querySelectorAll('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').forEach(el => el.remove());
-        document.querySelectorAll('img').forEach(el => el.remove());
-        const contentSelectors = ['.article-content', '.post-content', '.story-content', '.content', 'article', '.main-content', '.entry-content', '.story-body', '.article-body', '#content', '.body-content', '.ArticleBody'];
-        let contentFound = false;
-        for (const selector of contentSelectors) {
-          const elements = document.querySelectorAll(selector);
-          if (elements.length > 0) {
-            elements.forEach(el => {
-              el.style.display = 'block';
-              el.style.visibility = 'visible';
-              el.style.maxHeight = 'none';
-              el.style.overflow = 'visible';
-            });
-            contentFound = true;
-            break;
-          }
-        }
-        if (!contentFound) {
-          document.querySelectorAll('p').forEach(p => {
-            p.style.display = 'block';
-            p.style.visibility = 'visible';
-          });
-        }
-        document.querySelectorAll('[class*="paywall"], [class*="subscription"]').forEach(el => el.remove());
-      });
-
-      const cleanHtml = await page.content();
-      console.log('✅ Archive cleaned, returning response');
-      await page.close().catch(() => {});
-      await browser.close().catch(() => {});
-      forceGC();
-      isProcessing = false;
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.send(cleanHtml);
-    }
-
-    // === FALLBACK TO BPC ===
-    console.log('📚 Archive failed, falling back to BPC...');
-
-    const response = await connect({
-      headless: false,
-      turnstile: true,
-      fingerprint: true,
-      args: [
-        `--disable-extensions-except=${EXTENSION_PATH}`,
-        `--load-extension=${EXTENSION_PATH}`,
-        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-        '--single-process', '--no-zygote', '--js-flags="--max-old-space-size=128"',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-        '--disable-breakpad', '--disable-client-side-phishing-detection', '--disable-default-apps',
-        '--disable-hang-monitor', '--disable-ipc-flooding-protection', '--disable-popup-blocking',
-        '--disable-prompt-on-repost', '--disable-renderer-backgrounding', '--disable-sync',
-        '--metrics-recording-only', '--no-first-run', '--password-store=basic', '--use-mock-keychain',
-        '--disable-web-security', '--disable-features=BlockInsecurePrivateNetworkRequests',
-        '--disable-jit', '--disable-accelerated-2d-canvas', '--disable-accelerated-jpeg-decoding',
-        '--disable-accelerated-mjpeg-decode', '--disable-accelerated-video-decode'
-      ],
-      customConfig: {
-        chromePath: '/usr/bin/chromium',
-        ignoreHTTPSErrors: true,
-        defaultViewport: { width: 1024, height: 600 }
-      }
-    });
-
-    browser = response.browser;
-    page = response.page;
-
-    await wait(3000);
-
-    await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
-    await page.setExtraHTTPHeaders({ 'Referer': 'https://www.google.com/' });
-
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
-
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      const resourceType = req.resourceType();
-      const url = req.url().toLowerCase();
-      if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
-        req.abort();
-        return;
-      }
-      if (url.includes('paywall') || url.includes('subscription') || url.includes('cxense') ||
-          url.includes('google-analytics') || url.includes('googletagmanager') ||
-          url.includes('facebook') || url.includes('segment') || url.includes('optimizely') ||
-          url.includes('abtest') || url.includes('analytics') || url.includes('chartbeat') ||
-          url.includes('scorecard') || url.includes('comscore') || url.includes('quantcast') ||
-          url.includes('adzerk') || url.includes('doubleclick')) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
-
-    console.log('⏳ Navigating...');
-    await page.goto(cleanUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 45000
-    });
-    console.log('✅ Page loaded successfully');
-
-    await wait(3000);
-
-    // ===== COMPLETE CLEANUP FOR KOREADER =====
-    await page.evaluate(() => {
-      try {
-        // 1. REMOVE ALL "CONTINUE READING" ELEMENTS BY ANY MEANS
-        // By text content
-        const allElements = document.querySelectorAll('*');
-        allElements.forEach(el => {
-          const text = (el.textContent || '').trim();
-          if (text === 'Continue Reading' || 
-              text === 'Continue reading' ||
-              text === 'Read more' ||
-              text === 'Read More' ||
-              text.includes('Continue Reading') ||
-              text.includes('Read more')) {
-            el.remove();
-          }
-        });
-        
-        // By class names
-        document.querySelectorAll('[class*="continue"], [class*="Continue"], [class*="read-more"], [class*="Read-More"], [class*="show-more"], [class*="Show-More"]').forEach(el => el.remove());
-        document.querySelectorAll('[id*="continue"], [id*="Continue"], [id*="read-more"], [id*="Read-More"]').forEach(el => el.remove());
-
-        // By data attributes
-        document.querySelectorAll('[data-testid*="continue"], [data-testid*="read-more"]').forEach(el => el.remove());
-        
-        // 2. REMOVE PAYWALL OVERLAYS
-        document.querySelectorAll('.paywall, .subscription-wall, .premium-wall, .metered-content, .gateway, [class*="paywall"], [id*="paywall"], [class*="subscription"], [id*="subscription"], [class*="metered"], [id*="metered"]').forEach(el => el.remove());
-        
-        // 3. REMOVE ALL TRUNCATION AND CLIPPING
-        document.querySelectorAll('*').forEach(el => {
-          if (el && el.style) {
-            if (el.style.maxHeight) el.style.maxHeight = 'none';
-            if (el.style.height && el.style.height !== 'auto') el.style.height = 'auto';
-            if (el.style.overflow === 'hidden') el.style.overflow = 'visible';
-            if (el.style.clip) el.style.clip = 'none';
-            if (el.style.clipPath) el.style.clipPath = 'none';
-            if (el.style.filter && el.style.filter.includes('blur')) el.style.filter = 'none';
-            if (el.style.backdropFilter) el.style.backdropFilter = 'none';
-            if (el.style.opacity && parseFloat(el.style.opacity) < 1) el.style.opacity = '1';
-            if (el.style.display === 'none') el.style.display = 'block';
-            if (el.style.visibility === 'hidden') el.style.visibility = 'visible';
-          }
-        });
-
-        // 4. SHOW ALL CONTENT CONTAINERS
-        const contentSelectors = [
-          '.article-body', '.article-content', '.post-content', '.story-content', 
-          '.content', 'article', '.main-content', '.entry-content', '.story-body',
-          '.article-body', '#content', '.body-content', '.ArticleBody',
-          '.article__body', '.article__content', '.post__content', '.story__body'
-        ];
-        
-        for (const selector of contentSelectors) {
-          document.querySelectorAll(selector).forEach(el => {
-            if (el && el.style) {
-              el.style.display = 'block';
-              el.style.visibility = 'visible';
-              el.style.maxHeight = 'none';
-              el.style.overflow = 'visible';
-              el.style.opacity = '1';
-              el.style.filter = 'none';
-              el.style.height = 'auto';
-              el.style.clip = 'none';
-              el.style.clipPath = 'none';
+      
+      if (!text) {
+        const articleBody = document.querySelector('.article-body, .article-content, .story-body, .content, article');
+        if (articleBody) {
+          const allText = articleBody.textContent || '';
+          const lines = allText.split('\n').filter(line => line.trim().length > 20);
+          lines.forEach(line => {
+            if (!line.includes('Continue Reading') && !line.includes('Read more')) {
+              text += '<p>' + line.trim() + '</p>';
             }
           });
         }
-
-        // 5. SHOW ALL PARAGRAPHS
-        document.querySelectorAll('p').forEach(p => {
-          if (p && p.style) {
-            p.style.display = 'block';
-            p.style.visibility = 'visible';
-            p.style.maxHeight = 'none';
-            p.style.overflow = 'visible';
-            p.style.height = 'auto';
-            p.style.margin = '0 0 1em 0';
-            p.style.lineHeight = '1.6';
-            p.style.opacity = '1';
-            p.style.filter = 'none';
-          }
-        });
-
-        // 6. REMOVE ANY OVERLAY ELEMENTS
-        document.querySelectorAll('[role="dialog"], [role="alert"], .overlay, .modal, .popup, .dialog').forEach(el => el.remove());
-        
-        // 7. REMOVE IMAGES
-        document.querySelectorAll('img').forEach(el => el.remove());
-
-        // 8. ALLOW SCROLLING
-        if (document.body) {
-          document.body.style.overflow = 'auto';
-          document.body.style.maxHeight = 'none';
-          document.body.style.position = 'static';
-        }
-        if (document.documentElement) {
-          document.documentElement.style.overflow = 'auto';
-          document.documentElement.style.maxHeight = 'none';
-        }
-        
-        // 9. REMOVE ANY REMAINING TRUNCATION INDICATORS
-        document.querySelectorAll('.truncated, .cutoff, [class*="truncate"], [class*="cutoff"]').forEach(el => el.remove());
-        
-        // 10. EXTRA: Remove any elements with "Continue" in their text
-        document.querySelectorAll('*').forEach(el => {
-          const text = (el.textContent || '').trim();
-          if (text === 'Continue' || text === 'continue' || text === 'CONTINUE') {
-            el.remove();
-          }
-        });
-        
-      } catch (e) {
-        // Silent fail - don't let cleanup break the page
       }
+      
+      return text;
     });
 
-    await wait(3000);
-
-    const htmlContent = await page.content();
-    console.log('✅ BPC content extracted, returning response');
+    // Send simple HTML for KOReader
+    const finalHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Article</title>
+  <style>
+    body { 
+      font-family: Georgia, serif; 
+      max-width: 700px; 
+      margin: 0 auto; 
+      padding: 20px; 
+      line-height: 1.8; 
+      font-size: 18px;
+      color: #000;
+      background: #fff;
+    }
+    p { 
+      margin: 0 0 1.2em 0; 
+      text-align: justify;
+    }
+  </style>
+</head>
+<body>
+${textContent}
+</body>
+</html>`;
     
-    await page.close().catch(() => {});
-    await browser.close().catch(() => {});
-    forceGC();
-    isProcessing = false;
-
+    console.log('📝 Sending text-only version for KOReader');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(htmlContent);
-  } catch (error) {
-    console.error('❌ Error:', error.message);
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
-    if (page) {
-      await page.close().catch(() => {});
-    }
-    forceGC();
     isProcessing = false;
-    res.status(500).send(`Error: ${error.message}`);
+    return res.send(finalHtml);
   }
-});
 
-setInterval(forceGC, 30000);
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`✅ BPC Extension path: ${EXTENSION_PATH}`);
-  console.log(`⚠️ Memory limit: 512MB`);
-  console.log(`📚 Archive-first mode enabled (web.archive.org only)`);
+  // ===== FOR BROWSER: Send full HTML =====
+  const htmlContent = await page.content();
+  console.log('📝 Sending full HTML for browser');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(htmlContent);
 });
