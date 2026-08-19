@@ -8,11 +8,12 @@ puppeteer.use(StealthPlugin());
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const EXTENSION_PATH = path.join(__dirname, 'bpc_extension/bypass-paywalls-chrome-clean-master');
+// Points to the BPC extension directory inside the container
+const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-chrome-clean-master');
 
-// Root route handler to fix the 404 error at the base URL
+// Root route handler to completely eliminate base URL 404 errors
 app.get('/', (req, res) => {
-  res.send('QuickRSS BPC Proxy Service is running. Use /fetch?url=YOUR_ENCODED_URL to proxy pages.');
+  res.status(200).send('QuickRSS BPC Proxy Service is active. Send requests to /fetch?url=YOUR_ENCODED_URL');
 });
 
 app.get('/fetch', async (req, res) => {
