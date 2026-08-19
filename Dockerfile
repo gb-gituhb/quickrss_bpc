@@ -1,6 +1,6 @@
 FROM node:18-slim
 
-# ===== INSTALL MINIMAL DEPENDENCIES =====
+# ===== INSTALL DEPENDENCIES (including wget and unzip) =====
 RUN apt-get update && apt-get install -y \
     chromium \
     xvfb \
@@ -16,11 +16,12 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
+    wget \
+    unzip \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
 # ===== ENVIRONMENT VARIABLES =====
-# NOTE: --expose-gc is NOT allowed in NODE_OPTIONS
 ENV NODE_OPTIONS="--max-old-space-size=384"
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV CHROME_PATH=/usr/bin/chromium
@@ -51,5 +52,4 @@ USER appuser
 EXPOSE 3000
 
 # ===== START WITH MEMORY OPTIMIZATIONS =====
-# Pass --expose-gc directly (not via NODE_OPTIONS)
 CMD ["sh", "-c", "xvfb-run --auto-servernum --server-args=\"-screen 0 1024x768x24\" node --expose-gc --max-old-space-size=384 server.js"]
