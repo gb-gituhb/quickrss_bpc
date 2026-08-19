@@ -23,6 +23,54 @@ const forceGC = () => {
   }
 };
 
+// ===== ESCAPE HTML =====
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+}
+
+// ===== URL CLEANING FUNCTION =====
+function cleanArticleUrl(rawUrl) {
+  if (!rawUrl) return null;
+
+  let cleanUrl = rawUrl;
+
+  // Handle FiveFilters format: ?step=3&fulltext=1&url=https://example.com
+  if (cleanUrl.includes('?step=') && cleanUrl.includes('&url=')) {
+    const match = cleanUrl.match(/url=([^&]+)/);
+    if (match) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  // Handle QuickRSS comma format: ?step=3,https://example.com
+  if (cleanUrl.match(/^\?step=\d+,/)) {
+    cleanUrl = cleanUrl.replace(/^\?step=\d+,/, '');
+  }
+
+  // Handle URL-encoded
+  try {
+    const decoded = decodeURIComponent(cleanUrl);
+    if (decoded !== cleanUrl && decoded.match(/^https?:\/\//)) {
+      return decoded;
+    }
+  } catch (e) {}
+
+  // Extract URL if it contains step= pattern
+  if (cleanUrl.includes('?step=') || cleanUrl.includes('step=')) {
+    const match = cleanUrl.match(/https?:\/\/[^\s,]+/);
+    if (match) {
+      return match[0];
+    }
+  }
+
+  return cleanUrl;
+}
+
 // ===== PROCESS QUEUE =====
 async function processQueue() {
   if (isProcessing || requestQueue.length === 0) return;
@@ -37,7 +85,6 @@ async function processQueue() {
     console.log(`⏳ Processing queue (${requestQueue.length} remaining)`);
 
     // ===== ARCHIVE-FIRST (WAYBACK MACHINE) =====
-    console.log('📚 Trying archive-first approach...');
     const archiveUrls = [
       `https://web.archive.org/web/2/${cleanUrl}`,
       `https://web.archive.org/web/20260819000000/${cleanUrl}`,
@@ -45,11 +92,9 @@ async function processQueue() {
     ];
 
     let archiveContent = null;
-    let archiveUsed = false;
 
     for (const archiveUrl of archiveUrls) {
       try {
-        console.log(`📚 Trying: ${archiveUrl}`);
         const response = await fetch(archiveUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' },
           signal: AbortSignal.timeout(10000)
@@ -58,20 +103,17 @@ async function processQueue() {
           const html = await response.text();
           if (!html.includes('does not exist') && !html.includes('Not Found') && !html.includes('404') && html.length > 5000) {
             archiveContent = html;
-            console.log(`✅ Archive found at: ${archiveUrl}`);
-            archiveUsed = true;
+            console.log(`✅ Archive found`);
             break;
           }
         }
       } catch (archiveError) {
-        console.log(`⚠️ Archive failed: ${archiveUrl} - ${archiveError.message}`);
+        // Silently continue
       }
     }
 
     // ===== IF ARCHIVE FOUND, USE IT =====
     if (archiveContent) {
-      console.log('📝 Using archive content...');
-
       const response = await connect({
         headless: false,
         turnstile: true,
@@ -135,7 +177,7 @@ async function processQueue() {
       let contentToSend = await page.content();
 
       if (isKOReader) {
-        const textContent = await page.evaluate(() => {
+        const htmlContent = await page.evaluate(() => {
           const articleSelectors = [
             '.article-body', '.article-content', '.post-content', '.story-content',
             '.content', 'article', '.main-content', '.entry-content', '.story-body',
@@ -166,63 +208,45 @@ async function processQueue() {
             articleElement = document.body;
           }
 
-          const walker = document.createTreeWalker(
-            articleElement,
-            NodeFilter.SHOW_TEXT,
-            {
-              acceptNode: function(node) {
-                const parent = node.parentElement;
-                if (!parent) return NodeFilter.FILTER_REJECT;
-                const tag = parent.tagName.toLowerCase();
-                if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg') {
-                  return NodeFilter.FILTER_REJECT;
-                }
-                return NodeFilter.FILTER_ACCEPT;
-              }
-            }
-          );
-          const textParts = [];
-          const seen = new Set();
-          let node;
-          const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
-          while (node = walker.nextNode()) {
-            const text = node.textContent.trim();
-            if (text && !seen.has(text)) {
-              seen.add(text);
-              let shouldSkip = false;
-              for (const phrase of skipPhrases) {
-                if (text.includes(phrase)) { shouldSkip = true; break; }
-              }
-              if (!shouldSkip) {
-                textParts.push(text);
-              }
-            }
-          }
-          if (textParts.length === 0) {
-            document.querySelectorAll('p').forEach(p => {
-              const text = p.textContent.trim();
-              if (text && !seen.has(text)) {
-                seen.add(text);
-                textParts.push(text);
-              }
-            });
-          }
-          return textParts.join('\n\n');
+          let html = articleElement.innerHTML;
+          html = html.replace(/<img[^>]*>/g, '');
+          html = html.replace(/<[^>]*class="[^"]*(paywall|subscription)[^"]*"[^>]*>[\s\S]*?<\/[^>]*>/gi, '');
+          html = html.replace(/<[^>]*id="[^"]*(paywall|subscription)[^"]*"[^>]*>[\s\S]*?<\/[^>]*>/gi, '');
+          html = html.replace(/<script[\s\S]*?<\/script>/g, '');
+          html = html.replace(/<style[\s\S]*?<\/style>/g, '');
+          html = html.replace(/<p>\s*<\/p>/g, '');
+          return html.trim();
         });
 
-        contentToSend = textContent
-          .replace(/[^\w\s.,!?;:'"()\-\n]/g, '')
-          .replace(/\n{3,}/g, '\n\n')
-          .replace(/  +/g, ' ')
-          .trim();
+        const title = await page.evaluate(() => {
+          const titleEl = document.querySelector('h1, .article-title, .headline, .entry-title, .title');
+          return titleEl ? titleEl.textContent.trim() : 'Article';
+        });
 
-        console.log(`📝 Sending sanitized text to KOReader (${contentToSend.length} chars) [ARCHIVE]`);
-        console.log(`📝 First 300 chars: ${contentToSend.substring(0, 300)}...`);
-      } else {
-        console.log('📝 Sending full HTML for browser [ARCHIVE]');
+        contentToSend = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Georgia, serif; max-width: 700px; margin: 0 auto; padding: 20px; line-height: 1.8; font-size: 18px; color: #000; background: #fff; }
+    h1, h2, h3 { margin: 1.2em 0 0.5em 0; }
+    p { margin: 0 0 1.2em 0; text-align: justify; }
+    a { color: #0066cc; text-decoration: underline; }
+    .paywall, .subscription { display: none; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${htmlContent}
+</body>
+</html>`;
+
+        console.log(`📝 Sent HTML to KOReader (${contentToSend.length} chars) [ARCHIVE]`);
       }
 
-      res.setHeader('Content-Type', isKOReader ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(contentToSend);
 
       if (browserInstance) {
@@ -237,7 +261,7 @@ async function processQueue() {
     // ============================================================
     // ARCHIVE FAILED → FALLBACK TO BPC
     // ============================================================
-    console.log('📚 Archive failed, falling back to BPC...');
+    console.log('📚 Archive failed, using BPC...');
 
     const response = await connect({
       headless: false,
@@ -295,12 +319,12 @@ async function processQueue() {
       }
     });
 
-    console.log(`⏳ Navigating to: ${cleanUrl}`);
+    console.log(`⏳ Navigating...`);
     await page.goto(cleanUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 45000
     });
-    console.log('✅ Page loaded successfully');
+    console.log('✅ Page loaded');
 
     await wait(3000);
 
@@ -321,14 +345,10 @@ async function processQueue() {
         return false;
       });
       if (clicked) {
-        console.log('🔘 Clicked "Continue Reading" button - waiting for content to load...');
+        console.log('🔘 Clicked "Continue Reading"');
         await wait(4000);
-      } else {
-        console.log('ℹ️ No "Continue Reading" button found');
       }
-    } catch (e) {
-      console.log('⚠️ Error clicking "Continue Reading":', e.message);
-    }
+    } catch (e) {}
 
     // Cleanup
     await page.evaluate(() => {
@@ -368,10 +388,10 @@ async function processQueue() {
 
     await wait(3000);
 
-    // ===== EXTRACT TEXT =====
     let contentToSend;
+
     if (isKOReader) {
-      const textContent = await page.evaluate(() => {
+      const htmlContent = await page.evaluate(() => {
         const articleSelectors = [
           '.article-body', '.article-content', '.post-content', '.story-content',
           '.content', 'article', '.main-content', '.entry-content', '.story-body',
@@ -402,64 +422,47 @@ async function processQueue() {
           articleElement = document.body;
         }
 
-        const walker = document.createTreeWalker(
-          articleElement,
-          NodeFilter.SHOW_TEXT,
-          {
-            acceptNode: function(node) {
-              const parent = node.parentElement;
-              if (!parent) return NodeFilter.FILTER_REJECT;
-              const tag = parent.tagName.toLowerCase();
-              if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg') {
-                return NodeFilter.FILTER_REJECT;
-              }
-              return NodeFilter.FILTER_ACCEPT;
-            }
-          }
-        );
-        const textParts = [];
-        const seen = new Set();
-        let node;
-        const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
-        while (node = walker.nextNode()) {
-          const text = node.textContent.trim();
-          if (text && !seen.has(text)) {
-            seen.add(text);
-            let shouldSkip = false;
-            for (const phrase of skipPhrases) {
-              if (text.includes(phrase)) { shouldSkip = true; break; }
-            }
-            if (!shouldSkip) {
-              textParts.push(text);
-            }
-          }
-        }
-        if (textParts.length === 0) {
-          document.querySelectorAll('p').forEach(p => {
-            const text = p.textContent.trim();
-            if (text && !seen.has(text)) {
-              seen.add(text);
-              textParts.push(text);
-            }
-          });
-        }
-        return textParts.join('\n\n');
+        let html = articleElement.innerHTML;
+        html = html.replace(/<img[^>]*>/g, '');
+        html = html.replace(/<[^>]*class="[^"]*(paywall|subscription)[^"]*"[^>]*>[\s\S]*?<\/[^>]*>/gi, '');
+        html = html.replace(/<[^>]*id="[^"]*(paywall|subscription)[^"]*"[^>]*>[\s\S]*?<\/[^>]*>/gi, '');
+        html = html.replace(/<script[\s\S]*?<\/script>/g, '');
+        html = html.replace(/<style[\s\S]*?<\/style>/g, '');
+        html = html.replace(/<p>\s*<\/p>/g, '');
+        return html.trim();
       });
 
-      contentToSend = textContent
-        .replace(/[^\w\s.,!?;:'"()\-\n]/g, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .replace(/  +/g, ' ')
-        .trim();
+      const title = await page.evaluate(() => {
+        const titleEl = document.querySelector('h1, .article-title, .headline, .entry-title, .title');
+        return titleEl ? titleEl.textContent.trim() : 'Article';
+      });
 
-      console.log(`📝 Sending sanitized text to KOReader (${contentToSend.length} chars) [BPC]`);
-      console.log(`📝 First 300 chars: ${contentToSend.substring(0, 300)}...`);
+      contentToSend = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Georgia, serif; max-width: 700px; margin: 0 auto; padding: 20px; line-height: 1.8; font-size: 18px; color: #000; background: #fff; }
+    h1, h2, h3 { margin: 1.2em 0 0.5em 0; }
+    p { margin: 0 0 1.2em 0; text-align: justify; }
+    a { color: #0066cc; text-decoration: underline; }
+    .paywall, .subscription { display: none; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${htmlContent}
+</body>
+</html>`;
+
+      console.log(`📝 Sent HTML to KOReader (${contentToSend.length} chars) [BPC]`);
     } else {
       contentToSend = await page.content();
-      console.log('📝 Sending full HTML for browser [BPC]');
     }
 
-    res.setHeader('Content-Type', isKOReader ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(contentToSend);
 
     if (browserInstance) {
@@ -468,7 +471,7 @@ async function processQueue() {
     forceGC();
 
   } catch (error) {
-    console.error('❌ Error processing request:', error.message);
+    console.error('❌ Error:', error.message);
     if (res && !res.headersSent) {
       res.status(500).send(`Error: ${error.message}`);
     }
@@ -492,44 +495,26 @@ app.get('/fetch', async (req, res) => {
     return res.status(400).send('Missing url parameter.');
   }
 
-  // ===== URL CLEANING =====
   let cleanUrl = targetUrl;
 
   if (Array.isArray(cleanUrl)) {
-    console.log(`📦 URL is an array with ${cleanUrl.length} items`);
     cleanUrl = cleanUrl.join('');
-    console.log(`🔧 Joined array to: ${cleanUrl}`);
   }
 
   if (typeof cleanUrl === 'object' && cleanUrl !== null) {
-    console.log(`📦 URL is an object, extracting...`);
     if (cleanUrl.url) cleanUrl = cleanUrl.url;
     else if (cleanUrl[0]) cleanUrl = cleanUrl[0];
     else cleanUrl = String(cleanUrl || '');
   }
 
   if (typeof cleanUrl !== 'string') {
-    console.error(`❌ URL is not a string: ${typeof cleanUrl}`);
     cleanUrl = String(cleanUrl || '');
   }
 
-  console.log(`📝 Raw URL: ${cleanUrl}`);
-
-  cleanUrl = cleanUrl.replace(/^\?step=\d+,/, '');
-  cleanUrl = cleanUrl.replace(/^[^:]+:\/\/[^,]+,\s*/, '');
-
-  if (cleanUrl.includes('?step=') || cleanUrl.includes('step=')) {
-    const match = cleanUrl.match(/https?:\/\/[^\s,]+/);
-    if (match) {
-      cleanUrl = match[0];
-      console.log(`🔧 Extracted URL from malformed string: ${cleanUrl}`);
-    }
-  }
-
-  try {
-    cleanUrl = decodeURIComponent(cleanUrl);
-  } catch (e) {
-    console.log(`⚠️ URL decode failed: ${e.message}`);
+  // Clean URL using the function
+  const cleaned = cleanArticleUrl(cleanUrl);
+  if (cleaned) {
+    cleanUrl = cleaned;
   }
 
   cleanUrl = cleanUrl.replace(/[,\s]+$/, '');
@@ -537,24 +522,16 @@ app.get('/fetch', async (req, res) => {
   try {
     new URL(cleanUrl);
   } catch (e) {
-    console.error(`❌ Invalid URL after cleaning: ${cleanUrl}`);
-    console.error(`❌ Original was: ${targetUrl}`);
+    console.error(`❌ Invalid URL: ${cleanUrl}`);
     return res.status(400).send('Invalid URL format.');
   }
 
-  console.log(`✅ Clean URL: ${cleanUrl}`);
-
-  // ===== DETECT KOREADER =====
   const userAgent = req.headers['user-agent'] || '';
   const isKOReader = userAgent.toLowerCase().includes('koreader');
-  console.log(`📱 User-Agent: ${userAgent}`);
-  console.log(`📱 isKOReader: ${isKOReader}`);
 
-  // ===== ADD TO QUEUE =====
   requestQueue.push({ req, res, cleanUrl, isKOReader });
-  console.log(`📥 Added to queue (${requestQueue.length} pending)`);
+  console.log(`📥 Queued (${requestQueue.length} pending)`);
 
-  // ===== START PROCESSING =====
   processQueue();
 });
 
@@ -564,6 +541,5 @@ setInterval(forceGC, 30000);
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`✅ BPC Extension path: ${EXTENSION_PATH}`);
-  console.log(`⚠️ Memory limit: 512MB`);
-  console.log(`📚 Archive-first mode enabled (web.archive.org only)`);
+  console.log(`📚 Archive-first mode enabled`);
 });
