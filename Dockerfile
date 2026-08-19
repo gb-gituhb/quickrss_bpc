@@ -1,6 +1,6 @@
 FROM node:18-slim
 
-# ===== INSTALL ONLY ESSENTIAL DEPENDENCIES =====
+# ===== INSTALL MINIMAL DEPENDENCIES =====
 RUN apt-get update && apt-get install -y \
     chromium \
     xvfb \
@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# ===== SET MEMORY-RELATED ENV VARS =====
-# REMOVED: --expose-gc from NODE_OPTIONS (causes npm install to fail)
+# ===== ENVIRONMENT VARIABLES =====
+# NOTE: --expose-gc is NOT allowed in NODE_OPTIONS
 ENV NODE_OPTIONS="--max-old-space-size=384"
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV CHROME_PATH=/usr/bin/chromium
@@ -31,8 +31,8 @@ WORKDIR /app
 # Copy package files first (better layer caching)
 COPY package*.json ./
 
-# Install without NODE_OPTIONS interfering
-RUN npm install --production && npm cache clean --force
+# Unset NODE_OPTIONS during install to avoid errors
+RUN unset NODE_OPTIONS && npm install --production && npm cache clean --force
 
 # ===== DOWNLOAD BPC EXTENSION =====
 RUN mkdir -p bpc_extension && \
@@ -43,7 +43,7 @@ RUN mkdir -p bpc_extension && \
 # Copy source code
 COPY . .
 
-# ===== CREATE NON-ROOT USER =====
+# ===== CREATE NON-ROOT USER (Security) =====
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app
 USER appuser
@@ -51,5 +51,5 @@ USER appuser
 EXPOSE 3000
 
 # ===== START WITH MEMORY OPTIMIZATIONS =====
-# Pass --expose-gc directly to node command (not via NODE_OPTIONS)
+# Pass --expose-gc directly (not via NODE_OPTIONS)
 CMD ["sh", "-c", "xvfb-run --auto-servernum --server-args=\"-screen 0 1024x768x24\" node --expose-gc --max-old-space-size=384 server.js"]
