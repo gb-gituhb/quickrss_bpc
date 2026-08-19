@@ -195,7 +195,7 @@ app.get('/fetch', async (req, res) => {
 
       let finalHtml = await page.content();
       
-      // ===== KOREADER: Send PLAIN TEXT (no HTML wrapper) =====
+      // ===== KOREADER: Send PLAIN TEXT =====
       if (isKOReader) {
         const textContent = await page.evaluate(() => {
           const body = document.body;
@@ -221,7 +221,8 @@ app.get('/fetch', async (req, res) => {
           const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
           while (node = walker.nextNode()) {
             const text = node.textContent.trim();
-            if (text.length > 30 && !seen.has(text)) {
+            // FIX: Removed length check - keep ALL text
+            if (text && !seen.has(text)) {
               seen.add(text);
               let shouldSkip = false;
               for (const phrase of skipPhrases) {
@@ -235,7 +236,7 @@ app.get('/fetch', async (req, res) => {
           if (textParts.length === 0) {
             document.querySelectorAll('p').forEach(p => {
               const text = p.textContent.trim();
-              if (text.length > 30 && !seen.has(text)) {
+              if (text && !seen.has(text)) {
                 seen.add(text);
                 textParts.push(text);
               }
@@ -244,8 +245,11 @@ app.get('/fetch', async (req, res) => {
           return textParts.join('\n\n');
         });
         
-        // Send PLAIN TEXT to KOReader
+        // ===== DEBUG: Log the text =====
         console.log(`📝 Sending plain text to KOReader (${textContent.length} chars)`);
+        console.log(`📝 First 300 chars: ${textContent.substring(0, 300)}...`);
+        console.log(`📝 Last 300 chars: ${textContent.substring(Math.max(0, textContent.length - 300))}...`);
+        
         await page.close().catch(() => {});
         await browser.close().catch(() => {});
         forceGC();
@@ -337,7 +341,7 @@ app.get('/fetch', async (req, res) => {
     await wait(3000);
 
     // ============================================================
-    // CHECK FOR "Continue Reading" (just in case)
+    // CHECK FOR "Continue Reading"
     // ============================================================
     try {
       const clicked = await page.evaluate(() => {
@@ -407,7 +411,7 @@ app.get('/fetch', async (req, res) => {
     let htmlContent = await page.content();
     
     // ============================================================
-    // KOREADER: Send PLAIN TEXT (no HTML wrapper)
+    // KOREADER: Send PLAIN TEXT
     // ============================================================
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
@@ -434,7 +438,8 @@ app.get('/fetch', async (req, res) => {
         const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
         while (node = walker.nextNode()) {
           const text = node.textContent.trim();
-          if (text.length > 30 && !seen.has(text)) {
+          // FIX: Removed length check - keep ALL text
+          if (text && !seen.has(text)) {
             seen.add(text);
             let shouldSkip = false;
             for (const phrase of skipPhrases) {
@@ -448,7 +453,7 @@ app.get('/fetch', async (req, res) => {
         if (textParts.length === 0) {
           document.querySelectorAll('p').forEach(p => {
             const text = p.textContent.trim();
-            if (text.length > 30 && !seen.has(text)) {
+            if (text && !seen.has(text)) {
               seen.add(text);
               textParts.push(text);
             }
@@ -457,8 +462,11 @@ app.get('/fetch', async (req, res) => {
         return textParts.join('\n\n');
       });
       
-      // Send PLAIN TEXT to KOReader
+      // ===== DEBUG: Log the text =====
       console.log(`📝 Sending plain text to KOReader (${textContent.length} chars)`);
+      console.log(`📝 First 300 chars: ${textContent.substring(0, 300)}...`);
+      console.log(`📝 Last 300 chars: ${textContent.substring(Math.max(0, textContent.length - 300))}...`);
+      
       await page.close().catch(() => {});
       await browser.close().catch(() => {});
       forceGC();
