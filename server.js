@@ -126,25 +126,102 @@ app.get('/fetch', async (req, res) => {
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    // Minimal stealth - just enough to avoid detection
+    // Minimal stealth
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
       window.chrome = { runtime: {} };
     });
 
-    // LET BPC DO EVERYTHING - NO REQUEST INTERCEPTION
-    // BPC handles all the blocking and bypassing itself
-    
-    // Navigate - let everything load naturally
-    console.log('⏳ Navigating (BPC in control)...');
+    // Navigate
+    console.log('⏳ Navigating...');
     await page.goto(targetUrl, {
       waitUntil: 'networkidle2',
       timeout: 60000
     });
 
-    // Give BPC time to work its magic
-    console.log('⏳ Waiting for BPC to bypass paywall...');
-    await wait(8000);
+    // Wait for page to stabilize
+    console.log('⏳ Waiting for page to stabilize...');
+    await wait(3000);
+
+    // FORCE BPC ACTIVATION - FIX ADDED HERE
+    console.log('🔧 Forcing BPC activation...');
+    await page.evaluate(() => {
+      // Try to trigger BPC manually
+      if (window.bpc) {
+        console.log('BPC found, activating...');
+        if (window.bpc.bypass) {
+          window.bpc.bypass();
+        }
+        if (window.bpc.activate) {
+          window.bpc.activate();
+        }
+      }
+      
+      // Dispatch custom event
+      document.dispatchEvent(new Event('bpc-activate'));
+      document.dispatchEvent(new CustomEvent('bpc-activate', { 
+        detail: { action: 'bypass' } 
+      }));
+      
+      // Click any BPC buttons
+      document.querySelectorAll('[data-bpc], .bpc-bypass, [data-bpc-action="bypass"]').forEach(el => {
+        el.click();
+      });
+      
+      // Try to find and click paywall bypass buttons
+      const bypassButtons = document.querySelectorAll('button, a');
+      bypassButtons.forEach(btn => {
+        const text = btn.textContent.toLowerCase();
+        if (text.includes('continue reading') || 
+            text.includes('read more') || 
+            text.includes('bypass') ||
+            text.includes('subscribe') && text.includes('free')) {
+          btn.click();
+        }
+      });
+      
+      // Remove common paywall overlays
+      const overlaySelectors = [
+        '.paywall',
+        '.subscription-wall',
+        '.premium-wall',
+        '.metered-content',
+        '.gateway',
+        '[class*="paywall"]',
+        '[id*="paywall"]',
+        '.wsj-paywall',
+        '.bloomberg-paywall',
+        '.ft-paywall'
+      ];
+      
+      overlaySelectors.forEach(selector => {
+        document.querySelectorAll(selector).forEach(el => {
+          el.remove();
+          console.log('Removed paywall element:', selector);
+        });
+      });
+      
+      // Show hidden content
+      document.querySelectorAll('.article-content, .post-content, .story-content, .content, .premium-content').forEach(el => {
+        el.style.display = 'block';
+        el.style.visibility = 'visible';
+        el.style.opacity = '1';
+        el.style.maxHeight = 'none';
+        el.style.overflow = 'visible';
+        el.style.height = 'auto';
+      });
+      
+      // Remove blur
+      document.querySelectorAll('[style*="blur"], [class*="blur"]').forEach(el => {
+        el.style.filter = 'none';
+        el.style.backdropFilter = 'none';
+        el.style.blur = '0px';
+      });
+    });
+
+    // Wait for BPC to work
+    console.log('⏳ Waiting for BPC to bypass...');
+    await wait(5000);
 
     // Check for Cloudflare
     const pageContent = await page.content();
@@ -171,14 +248,13 @@ app.get('/fetch', async (req, res) => {
       console.log('✅ No Cloudflare detected');
     }
 
-    // Only remove ads and popups - let BPC handle the rest
+    // Remove ads and popups
     await page.evaluate(() => {
-      // Remove ads (BPC does this too, but just in case)
       document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"]').forEach(el => el.remove());
       document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => el.remove());
       document.querySelectorAll('[class*="cookie"], [id*="cookie"]').forEach(el => el.remove());
       
-      // Remove images to save bandwidth
+      // Remove images
       document.querySelectorAll('img').forEach(el => el.remove());
     });
 
