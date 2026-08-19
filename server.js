@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/fetch', async (req, res) => {
-  const targetUrl = req.query.url;
+  let targetUrl = req.query.url;
   
   if (!targetUrl) {
     return res.status(400).send('Missing url parameter.');
@@ -34,6 +34,20 @@ app.get('/fetch', async (req, res) => {
 
   // ===== AGGRESSIVE URL CLEANING =====
   let cleanUrl = targetUrl;
+
+  // Handle arrays from malformed query params (QuickRSS sometimes sends arrays)
+  if (Array.isArray(cleanUrl)) {
+    console.log(`📦 URL is an array with ${cleanUrl.length} items`);
+    cleanUrl = cleanUrl[0] || '';
+  }
+
+  // Handle objects
+  if (typeof cleanUrl === 'object' && cleanUrl !== null) {
+    console.log(`📦 URL is an object, extracting...`);
+    if (cleanUrl.url) cleanUrl = cleanUrl.url;
+    else if (cleanUrl[0]) cleanUrl = cleanUrl[0];
+    else cleanUrl = String(cleanUrl || '');
+  }
 
   // SAFETY: Ensure it's a string
   if (typeof cleanUrl !== 'string') {
