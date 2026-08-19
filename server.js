@@ -1,7 +1,11 @@
 const express = require('express');
-const { connect } = require('puppeteer-real-browser');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const path = require('path');
 const fs = require('fs');
+
+// Add stealth plugin
+puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,10 +45,10 @@ app.get('/fetch', async (req, res) => {
   try {
     console.log(`🌐 Fetching: ${targetUrl}`);
 
-    const response = await connect({
+    // Launch with stealth and BPC extension
+    browser = await puppeteer.launch({
       headless: false,
-      turnstile: true,
-      fingerprint: true,
+      executablePath: '/usr/bin/chromium',
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
@@ -76,61 +80,16 @@ app.get('/fetch', async (req, res) => {
         '--disable-web-security',
         '--disable-features=BlockInsecurePrivateNetworkRequests'
       ],
-      customConfig: {
-        chromePath: '/usr/bin/chromium',
-        ignoreHTTPSErrors: true,
-        defaultViewport: {
-          width: 1280,
-          height: 720
-        }
+      defaultViewport: {
+        width: 1280,
+        height: 720
       }
     });
 
-    browser = response.browser;
-    page = response.page;
-
-    // Wait for extension to load
-    console.log('⏳ Waiting for extension to load...');
-    await wait(3000);
-    
-    // Extension detection
-    let extensionId = null;
-    let extensionFound = false;
-    let attempts = 0;
-    const maxAttempts = 3;
-    
-    while (!extensionFound && attempts < maxAttempts) {
-      attempts++;
-      const targets = await browser.targets();
-      for (const target of targets) {
-        const url = target.url();
-        if (url.startsWith('chrome-extension://')) {
-          const match = url.match(/chrome-extension:\/\/([^\/]+)/);
-          if (match) {
-            extensionId = match[1];
-            extensionFound = true;
-            console.log(`🔌 Extension found with ID: ${extensionId}`);
-            break;
-          }
-        }
-      }
-      if (!extensionFound && attempts < maxAttempts) {
-        await wait(2000);
-      }
-    }
-
-    if (!extensionFound) {
-      console.log('⚠️ Extension not loaded, continuing...');
-    }
+    page = await browser.newPage();
 
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-    // Minimal stealth
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      window.chrome = { runtime: {} };
-    });
 
     // Navigate
     console.log('⏳ Navigating...');
@@ -143,18 +102,14 @@ app.get('/fetch', async (req, res) => {
     console.log('⏳ Waiting for page to stabilize...');
     await wait(3000);
 
-    // FORCE BPC ACTIVATION - FIX ADDED HERE
+    // FORCE BPC ACTIVATION
     console.log('🔧 Forcing BPC activation...');
     await page.evaluate(() => {
       // Try to trigger BPC manually
       if (window.bpc) {
         console.log('BPC found, activating...');
-        if (window.bpc.bypass) {
-          window.bpc.bypass();
-        }
-        if (window.bpc.activate) {
-          window.bpc.activate();
-        }
+        if (window.bpc.bypass) window.bpc.bypass();
+        if (window.bpc.activate) window.bpc.activate();
       }
       
       // Dispatch custom event
@@ -197,12 +152,11 @@ app.get('/fetch', async (req, res) => {
       overlaySelectors.forEach(selector => {
         document.querySelectorAll(selector).forEach(el => {
           el.remove();
-          console.log('Removed paywall element:', selector);
         });
       });
       
       // Show hidden content
-      document.querySelectorAll('.article-content, .post-content, .story-content, .content, .premium-content').forEach(el => {
+      document.querySelectorAll('.article-content, .post-content, .story-content, .content, .premium-content, article p').forEach(el => {
         el.style.display = 'block';
         el.style.visibility = 'visible';
         el.style.opacity = '1';
