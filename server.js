@@ -1,6 +1,5 @@
 const express = require('express');
 const { connect } = require('puppeteer-real-browser');
-const cheerio = require('cheerio');
 const path = require('path');
 const dns = require('dns');
 
@@ -82,56 +81,122 @@ app.get('/fetch', async (req, res) => {
       }
     }
 
-    // If archive worked, clean and return it with cheerio (NO BROWSER)
+    // If archive worked, clean and return it
     if (archiveContent) {
-      console.log('📝 Cleaning archive content with cheerio...');
+      console.log('📝 Cleaning archive content...');
       
-      try {
-        const $ = cheerio.load(archiveContent);
+      const response = await connect({
+        headless: false,
+        turnstile: true,
+        fingerprint: true,
+        args: [
+          `--disable-extensions-except=${EXTENSION_PATH}`,
+          `--load-extension=${EXTENSION_PATH}`,
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--single-process',
+          '--no-zygote',
+          '--js-flags="--max-old-space-size=128"',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-breakpad',
+          '--disable-client-side-phishing-detection',
+          '--disable-default-apps',
+          '--disable-hang-monitor',
+          '--disable-ipc-flooding-protection',
+          '--disable-popup-blocking',
+          '--disable-prompt-on-repost',
+          '--disable-renderer-backgrounding',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--no-first-run',
+          '--password-store=basic',
+          '--use-mock-keychain',
+          '--disable-web-security',
+          '--disable-features=BlockInsecurePrivateNetworkRequests',
+          '--disable-jit',
+          '--disable-accelerated-2d-canvas',
+          '--disable-accelerated-jpeg-decoding',
+          '--disable-accelerated-mjpeg-decode',
+          '--disable-accelerated-video-decode'
+        ],
+        customConfig: {
+          chromePath: '/usr/bin/chromium',
+          ignoreHTTPSErrors: true,
+          defaultViewport: {
+            width: 1024,
+            height: 600
+          }
+        }
+      });
+
+      browser = response.browser;
+      page = response.page;
+
+      await page.setContent(archiveContent, {
+        waitUntil: 'domcontentloaded'
+      });
+
+      await wait(2000);
+
+      await page.evaluate(() => {
+        document.querySelectorAll('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').forEach(el => el.remove());
+        document.querySelectorAll('img').forEach(el => el.remove());
         
-        // Remove paywalls
-        $('.paywall, .subscription-wall, .premium-wall, .metered-content, .gateway, [class*="paywall"], [id*="paywall"]').remove();
-        
-        // Show content
         const contentSelectors = [
           '.article-content', '.post-content', '.story-content', '.content',
           'article', '.main-content', '.entry-content', '.story-body',
-          '.article-body', '#content', '.body-content'
+          '.article-body', '#content', '.body-content', '.ArticleBody'
         ];
         
         let contentFound = false;
         for (const selector of contentSelectors) {
-          if ($(selector).length > 0) {
-            $(selector).css('display', 'block');
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            elements.forEach(el => {
+              el.style.display = 'block';
+              el.style.visibility = 'visible';
+              el.style.maxHeight = 'none';
+              el.style.overflow = 'visible';
+            });
             contentFound = true;
             break;
           }
         }
         
         if (!contentFound) {
-          $('p').css('display', 'block');
+          const paragraphs = document.querySelectorAll('p');
+          if (paragraphs.length > 3) {
+            paragraphs.forEach(p => {
+              p.style.display = 'block';
+              p.style.visibility = 'visible';
+            });
+          }
         }
         
-        // Remove images and ads
-        $('img').remove();
-        $('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').remove();
-        
-        const cleanHtml = $.html();
-        
-        console.log('✅ Returned cleaned archive content (no browser)');
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        isProcessing = false;
-        return res.send(cleanHtml);
-      } catch (cleanError) {
-        console.log('⚠️ Cheerio cleaning failed, falling back to browser:', cleanError.message);
-      }
+        document.querySelectorAll('[class*="paywall"], [class*="subscription"]').forEach(el => el.remove());
+      });
+
+      const cleanHtml = await page.content();
+      
+      await page.close().catch(() => {});
+      await browser.close().catch(() => {});
+      forceGC();
+      
+      isProcessing = false;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(cleanHtml);
     }
 
     // === FALLBACK TO BPC ===
     console.log('📚 Archive failed, falling back to BPC...');
 
     const response = await connect({
-      headless: true,  // Save memory
+      headless: false,
       turnstile: true,
       fingerprint: true,
       args: [
@@ -141,6 +206,7 @@ app.get('/fetch', async (req, res) => {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        '--single-process',
         '--no-zygote',
         '--js-flags="--max-old-space-size=128"',
         '--disable-blink-features=AutomationControlled',
@@ -180,8 +246,6 @@ app.get('/fetch', async (req, res) => {
 
     browser = response.browser;
     page = response.page;
-
-    console.log('✅ Browser connected');
 
     await wait(3000);
 
