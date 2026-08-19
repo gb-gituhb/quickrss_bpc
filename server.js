@@ -194,21 +194,32 @@ app.get('/fetch', async (req, res) => {
       
       if (isKOReader) {
         const textContent = await page.evaluate(() => {
-          const paragraphs = document.querySelectorAll('p, .article-body p, .content p, .story-body p, .article-content p');
+          const allElements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, span, article, section, .content, .article-body, .story-body');
           let text = '';
           const seen = new Set();
-          paragraphs.forEach(p => {
-            const content = p.textContent ? p.textContent.trim() : '';
+          const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more'];
+          allElements.forEach(el => {
+            if (el.children.length > 0) return;
+            const content = el.textContent ? el.textContent.trim() : '';
             if (content && content.length > 20 && !seen.has(content)) {
-              seen.add(content);
-              if (!content.includes('Continue Reading') && !content.includes('Continue reading') && !content.includes('Read more')) {
-                text += '<p>' + content + '</p>';
+              let shouldSkip = false;
+              for (const phrase of skipPhrases) {
+                if (content.includes(phrase)) { shouldSkip = true; break; }
+              }
+              if (!shouldSkip) {
+                seen.add(content);
+                const tag = el.tagName.toLowerCase();
+                if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
+                  text += `<${tag}>${content}</${tag}>`;
+                } else {
+                  text += `<p>${content}</p>`;
+                }
               }
             }
           });
           return text;
         });
-        cleanHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}</style></head><body>${textContent}</body></html>`;
+        cleanHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}h1,h2,h3{margin:1.2em 0 0.5em 0}</style></head><body>${textContent}</body></html>`;
         console.log('📝 Sending text-only version for KOReader');
       }
 
@@ -335,15 +346,26 @@ app.get('/fetch', async (req, res) => {
     // ===== IF KOREADER: Extract text only =====
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
-        const paragraphs = document.querySelectorAll('p, .article-body p, .content p, .story-body p, .article-content p');
+        const allElements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, span, article, section, .content, .article-body, .story-body');
         let text = '';
         const seen = new Set();
-        paragraphs.forEach(p => {
-          const content = p.textContent ? p.textContent.trim() : '';
+        const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more'];
+        allElements.forEach(el => {
+          if (el.children.length > 0) return;
+          const content = el.textContent ? el.textContent.trim() : '';
           if (content && content.length > 20 && !seen.has(content)) {
-            seen.add(content);
-            if (!content.includes('Continue Reading') && !content.includes('Continue reading') && !content.includes('Read more')) {
-              text += '<p>' + content + '</p>';
+            let shouldSkip = false;
+            for (const phrase of skipPhrases) {
+              if (content.includes(phrase)) { shouldSkip = true; break; }
+            }
+            if (!shouldSkip) {
+              seen.add(content);
+              const tag = el.tagName.toLowerCase();
+              if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
+                text += `<${tag}>${content}</${tag}>`;
+              } else {
+                text += `<p>${content}</p>`;
+              }
             }
           }
         });
@@ -359,6 +381,7 @@ app.get('/fetch', async (req, res) => {
   <style>
     body { font-family: Georgia, serif; max-width: 700px; margin: 0 auto; padding: 20px; line-height: 1.8; font-size: 18px; color: #000; background: #fff; }
     p { margin: 0 0 1.2em 0; text-align: justify; }
+    h1, h2, h3 { margin: 1.2em 0 0.5em 0; }
   </style>
 </head>
 <body>
