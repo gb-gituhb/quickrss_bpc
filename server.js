@@ -127,8 +127,9 @@ app.get('/fetch', async (req, res) => {
     // === FALLBACK TO BPC ===
     console.log('📚 Archive failed, falling back to BPC...');
 
+    // SIMPLIFIED: Let the library handle everything
     const response = await connect({
-      headless: true,  // FIX: Use headless mode
+      headless: true,
       turnstile: true,
       fingerprint: true,
       args: [
@@ -136,49 +137,14 @@ app.get('/fetch', async (req, res) => {
         `--load-extension=${EXTENSION_PATH}`,
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--js-flags="--max-old-space-size=128"',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-breakpad',
-        '--disable-client-side-phishing-detection',
-        '--disable-default-apps',
-        '--disable-hang-monitor',
-        '--disable-ipc-flooding-protection',
-        '--disable-popup-blocking',
-        '--disable-prompt-on-repost',
-        '--disable-renderer-backgrounding',
-        '--disable-sync',
-        '--metrics-recording-only',
-        '--no-first-run',
-        '--password-store=basic',
-        '--use-mock-keychain',
-        '--disable-web-security',
-        '--disable-features=BlockInsecurePrivateNetworkRequests',
-        '--disable-jit',
-        '--disable-accelerated-2d-canvas',
-        '--disable-accelerated-jpeg-decoding',
-        '--disable-accelerated-mjpeg-decode',
-        '--disable-accelerated-video-decode'
-      ],
-      customConfig: {
-        chromePath: '/usr/bin/chromium',
-        ignoreHTTPSErrors: true,
-        defaultViewport: {
-          width: 1024,
-          height: 600
-        }
-      }
+        '--disable-dev-shm-usage'
+      ]
     });
 
     browser = response.browser;
     page = response.page;
 
-    await wait(3000);
+    console.log('✅ Browser connected');
 
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
 
