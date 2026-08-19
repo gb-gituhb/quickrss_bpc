@@ -38,7 +38,6 @@ app.get('/fetch', async (req, res) => {
   // Handle arrays from malformed query params (QuickRSS sometimes sends arrays)
   if (Array.isArray(cleanUrl)) {
     console.log(`📦 URL is an array with ${cleanUrl.length} items`);
-    // Join all parts together (they might be split)
     cleanUrl = cleanUrl.join('');
     console.log(`🔧 Joined array to: ${cleanUrl}`);
   }
@@ -365,60 +364,99 @@ app.get('/fetch', async (req, res) => {
 
     await wait(3000);
 
+    // ===== IMPROVED CLEANUP FOR BOTH BROWSER & KOREADER =====
     await page.evaluate(() => {
-      const url = window.location.href;
-      
-      if (url.includes('nytimes.com')) {
-        document.cookie = "nyt_cc=bypass; path=/; domain=.nytimes.com";
-        document.cookie = "nyt_metered=0; path=/; domain=.nytimes.com";
-      }
-      if (url.includes('wsj.com')) {
-        document.cookie = "wsj_cc=bypass; path=/; domain=.wsj.com";
-        document.cookie = "wsj_article_access=free; path=/; domain=.wsj.com";
-      }
-      if (url.includes('bloomberg.com')) {
-        document.cookie = "bb_article_access=free; path=/; domain=.bloomberg.com";
-      }
-      if (url.includes('ft.com')) {
-        document.cookie = "ft_subscriber=free; path=/; domain=.ft.com";
-      }
-      
-      const overlaySelectors = [
-        '.paywall', '.subscription-wall', '.premium-wall', '.metered-content',
-        '.gateway', '.wsj-paywall', '.bloomberg-paywall', '.ft-paywall',
-        '[class*="paywall"]', '[id*="paywall"]', '[class*="metered"]',
-        '[class*="subscription"]', '[id*="subscription"]'
-      ];
-      overlaySelectors.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => el.remove());
+      // ===== 1. REMOVE "CONTINUE READING" BUTTONS =====
+      const allElements = document.querySelectorAll('*');
+      allElements.forEach(el => {
+        const text = el.textContent || '';
+        if (text.trim() === 'Continue Reading' || 
+            text.trim() === 'Continue reading' ||
+            text.trim() === 'Read more' ||
+            text.includes('Continue Reading') ||
+            text.includes('Read more')) {
+          el.remove();
+        }
       });
       
+      document.querySelectorAll('[class*="continue"], [class*="read-more"], [class*="show-more"]').forEach(el => el.remove());
+      document.querySelectorAll('[id*="continue"], [id*="read-more"]').forEach(el => el.remove());
+      
+      // ===== 2. REMOVE PAYWALL OVERLAYS =====
+      document.querySelectorAll('.paywall, .subscription-wall, .premium-wall, .metered-content, [class*="paywall"], [id*="paywall"], [class*="subscription"]').forEach(el => el.remove());
+      
+      // ===== 3. REMOVE ALL TRUNCATION =====
+      document.querySelectorAll('*').forEach(el => {
+        if (el.style.maxHeight && el.style.maxHeight !== 'none') {
+          el.style.maxHeight = 'none';
+        }
+        if (el.style.overflow === 'hidden') {
+          el.style.overflow = 'visible';
+        }
+        if (el.style.clip) {
+          el.style.clip = 'none';
+        }
+        if (el.style.height && el.style.height !== 'auto') {
+          el.style.height = 'auto';
+        }
+        if (el.style.maxHeight && el.style.maxHeight !== 'none') {
+          el.style.maxHeight = 'none';
+        }
+      });
+
+      // Remove inline style attributes that hide content
+      document.querySelectorAll('[style*="max-height"], [style*="overflow:hidden"], [style*="clip"]').forEach(el => {
+        el.removeAttribute('style');
+      });
+
+      // ===== 4. SHOW ALL CONTENT =====
       const contentSelectors = [
-        '.article-content', '.post-content', '.story-content', '.content',
-        '.premium-content', 'article p', '.article-body', '.entry-content',
-        '.story-body', '.main-content'
+        '.article-body', '.article-content', '.post-content', '.story-content', 
+        '.content', 'article', '.main-content', '.entry-content', '.story-body',
+        '.article-body', '#content', '.body-content', '.ArticleBody'
       ];
-      contentSelectors.forEach(selector => {
+      
+      for (const selector of contentSelectors) {
         document.querySelectorAll(selector).forEach(el => {
           el.style.display = 'block';
           el.style.visibility = 'visible';
-          el.style.opacity = '1';
           el.style.maxHeight = 'none';
           el.style.overflow = 'visible';
+          el.style.opacity = '1';
+          el.style.filter = 'none';
           el.style.height = 'auto';
         });
+      }
+
+      // ===== 5. SHOW ALL PARAGRAPHS =====
+      document.querySelectorAll('p').forEach(p => {
+        p.style.display = 'block';
+        p.style.visibility = 'visible';
+        p.style.maxHeight = 'none';
+        p.style.overflow = 'visible';
+        p.style.height = 'auto';
+        p.style.margin = '0 0 1em 0';
+        p.style.lineHeight = '1.6';
       });
-      
+
+      // ===== 6. REMOVE BLUR =====
       document.querySelectorAll('[style*="blur"]').forEach(el => {
         el.style.filter = 'none';
         el.style.backdropFilter = 'none';
         el.style.blur = '0px';
       });
-      
+
+      // ===== 7. REMOVE IMAGES =====
+      document.querySelectorAll('img').forEach(el => el.remove());
+
+      // ===== 8. ALLOW SCROLLING =====
       document.body.style.overflow = 'auto';
       document.documentElement.style.overflow = 'auto';
+      document.body.style.maxHeight = 'none';
+      document.documentElement.style.maxHeight = 'none';
       
-      document.querySelectorAll('img').forEach(el => el.remove());
+      // ===== 9. REMOVE TRUNCATION INDICATORS =====
+      document.querySelectorAll('.truncated, .cutoff, [class*="truncate"]').forEach(el => el.remove());
     });
 
     await wait(3000);
