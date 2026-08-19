@@ -8,11 +8,8 @@ const PORT = process.env.PORT || 3000;
 const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-chrome-clean-master');
 
 let isProcessing = false;
-
-// Helper function for waiting
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Verify extension exists
 function verifyExtension() {
   const manifestPath = path.join(EXTENSION_PATH, 'manifest.json');
   if (!fs.existsSync(manifestPath)) {
@@ -129,67 +126,25 @@ app.get('/fetch', async (req, res) => {
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    // Enhanced stealth
+    // Minimal stealth - just enough to avoid detection
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      
-      Object.defineProperty(navigator, 'plugins', { 
-        get: () => {
-          const plugins = [
-            { name: 'Chrome PDF Plugin' },
-            { name: 'Chrome PDF Viewer' },
-            { name: 'Native Client' }
-          ];
-          plugins.length = 3;
-          plugins.item = (i) => plugins[i];
-          plugins.namedItem = (name) => plugins.find(p => p.name === name);
-          return plugins;
-        }
-      });
-      
-      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-      Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-      
-      window.chrome = { 
-        runtime: { 
-          id: 'test',
-          sendMessage: () => {}
-        } 
-      };
-      
-      const originalQuery = window.navigator.permissions?.query;
-      if (originalQuery) {
-        window.navigator.permissions.query = (parameters) => (
-          parameters.name === 'notifications' ?
-            Promise.resolve({ state: Notification.permission }) :
-            originalQuery(parameters)
-        );
-      }
+      window.chrome = { runtime: {} };
     });
 
-    // CRITICAL: Block ONLY images, media, video - Allow everything else
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      const resourceType = req.resourceType();
-      // Block ONLY images, media, video to save bandwidth/memory
-      if (['image', 'media', 'video'].includes(resourceType)) {
-        req.abort();
-      } else {
-        // Allow: document, stylesheet, font, script, xhr, fetch, etc.
-        req.continue();
-      }
-    });
-
-    // Navigate
-    console.log('⏳ Navigating...');
+    // LET BPC DO EVERYTHING - NO REQUEST INTERCEPTION
+    // BPC handles all the blocking and bypassing itself
+    
+    // Navigate - let everything load naturally
+    console.log('⏳ Navigating (BPC in control)...');
     await page.goto(targetUrl, {
       waitUntil: 'networkidle2',
-      timeout: 45000
+      timeout: 60000
     });
 
-    // Wait for BPC to work
-    console.log('⏳ Waiting for BPC bypass...');
-    await wait(3000);
+    // Give BPC time to work its magic
+    console.log('⏳ Waiting for BPC to bypass paywall...');
+    await wait(8000);
 
     // Check for Cloudflare
     const pageContent = await page.content();
@@ -216,28 +171,18 @@ app.get('/fetch', async (req, res) => {
       console.log('✅ No Cloudflare detected');
     }
 
-    // Remove ads, popups, but keep styles
+    // Only remove ads and popups - let BPC handle the rest
     await page.evaluate(() => {
-      // Remove ads
+      // Remove ads (BPC does this too, but just in case)
       document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"]').forEach(el => el.remove());
-      
-      // Remove popups
       document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => el.remove());
-      
-      // Remove newsletter signups
-      document.querySelectorAll('[class*="newsletter"], [class*="signup"]').forEach(el => el.remove());
-      
-      // Remove cookie notices
       document.querySelectorAll('[class*="cookie"], [id*="cookie"]').forEach(el => el.remove());
       
-      // Remove image placeholders (alt text for blocked images)
-      document.querySelectorAll('img').forEach(el => {
-        el.remove();
-      });
+      // Remove images to save bandwidth
+      document.querySelectorAll('img').forEach(el => el.remove());
     });
 
-    // Get the FULL HTML with ALL styles preserved, images removed
-    console.log('📝 Extracting full HTML with styles (images stripped)...');
+    console.log('📝 Extracting HTML...');
     const htmlContent = await page.content();
 
     console.log(`✅ Extracted ${htmlContent.length} characters`);
@@ -245,7 +190,6 @@ app.get('/fetch', async (req, res) => {
     await browser.close();
     isProcessing = false;
 
-    // Return styled HTML without images
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(htmlContent);
   } catch (error) {
