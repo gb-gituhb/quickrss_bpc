@@ -1,10 +1,14 @@
 const express = require('express');
-const { connect } = require('puppeteer-real-browser');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const path = require('path');
 const dns = require('dns');
 
 // DNS fix for Render
 dns.setDefaultResultOrder('ipv4first');
+
+// Add stealth plugin
+puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,7 +43,6 @@ app.get('/fetch', async (req, res) => {
 
   isProcessing = true;
   let browser, page;
-  let contentRetrieved = false;
 
   try {
     console.log(`🌐 Fetching: ${targetUrl}`);
@@ -75,7 +78,6 @@ app.get('/fetch', async (req, res) => {
               html.length > 5000) {
             archiveContent = html;
             console.log(`✅ Archive found at: ${archiveUrl}`);
-            contentRetrieved = true;
             break;
           }
         }
@@ -88,58 +90,21 @@ app.get('/fetch', async (req, res) => {
     if (archiveContent) {
       console.log('📝 Cleaning archive content...');
       
-      const response = await connect({
-        headless: false,
-        turnstile: true,
-        fingerprint: true,
+      browser = await puppeteer.launch({
+        headless: 'new',
+        executablePath: '/usr/bin/chromium',
         args: [
-          `--disable-extensions-except=${EXTENSION_PATH}`,
-          `--load-extension=${EXTENSION_PATH}`,
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--single-process',
           '--no-zygote',
-          '--js-flags="--max-old-space-size=128"',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-breakpad',
-          '--disable-client-side-phishing-detection',
-          '--disable-default-apps',
-          '--disable-hang-monitor',
-          '--disable-ipc-flooding-protection',
-          '--disable-popup-blocking',
-          '--disable-prompt-on-repost',
-          '--disable-renderer-backgrounding',
-          '--disable-sync',
-          '--metrics-recording-only',
-          '--no-first-run',
-          '--password-store=basic',
-          '--use-mock-keychain',
-          '--disable-web-security',
-          '--disable-features=BlockInsecurePrivateNetworkRequests',
-          '--disable-jit',
-          '--disable-accelerated-2d-canvas',
-          '--disable-accelerated-jpeg-decoding',
-          '--disable-accelerated-mjpeg-decode',
-          '--disable-accelerated-video-decode'
-        ],
-        customConfig: {
-          chromePath: '/usr/bin/chromium',
-          ignoreHTTPSErrors: true,
-          defaultViewport: {
-            width: 1024,
-            height: 600
-          }
-        }
+          '--js-flags="--max-old-space-size=128"'
+        ]
       });
 
-      browser = response.browser;
-      page = response.page;
-
+      page = await browser.newPage();
       await page.setContent(archiveContent, {
         waitUntil: 'domcontentloaded'
       });
@@ -196,13 +161,13 @@ app.get('/fetch', async (req, res) => {
       return res.send(cleanHtml);
     }
 
-    // === FALLBACK TO BPC IF ARCHIVE FAILS ===
-    console.log('📚 Archive failed, falling back to BPC...');
+    // === FALLBACK TO BPC WITH PUPPETEER+STEALTH ===
+    console.log('📚 Archive failed, falling back to BPC with Puppeteer+Stealth...');
 
-    const response = await connect({
+    // Launch with stealth and BPC extension
+    browser = await puppeteer.launch({
       headless: false,
-      turnstile: true,
-      fingerprint: true,
+      executablePath: '/usr/bin/chromium',
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
@@ -238,52 +203,13 @@ app.get('/fetch', async (req, res) => {
         '--disable-accelerated-mjpeg-decode',
         '--disable-accelerated-video-decode'
       ],
-      customConfig: {
-        chromePath: '/usr/bin/chromium',
-        ignoreHTTPSErrors: true,
-        defaultViewport: {
-          width: 1024,
-          height: 600
-        }
+      defaultViewport: {
+        width: 1024,
+        height: 600
       }
     });
 
-    browser = response.browser;
-    page = response.page;
-
-    // Wait for extension
-    console.log('⏳ Waiting for extension to load...');
-    await wait(3000);
-
-    // === FORCE BPC VIA STORAGE BEFORE NAVIGATION ===
-    console.log('🔧 Setting BPC preferences...');
-    await page.evaluateOnNewDocument(() => {
-      // This runs before the page loads
-      localStorage.setItem('bpc_enabled', 'true');
-      localStorage.setItem('bpc_auto_bypass', 'true');
-      localStorage.setItem('bpc_auto_remove_paywall', 'true');
-      
-      // Set site-specific preferences
-      const url = window.location.href;
-      if (url.includes('wsj.com')) {
-        localStorage.setItem('bpc_wsj_enabled', 'true');
-      }
-      if (url.includes('bloomberg.com')) {
-        localStorage.setItem('bpc_bloomberg_enabled', 'true');
-      }
-      if (url.includes('nytimes.com')) {
-        localStorage.setItem('bpc_nytimes_enabled', 'true');
-      }
-      if (url.includes('ft.com')) {
-        localStorage.setItem('bpc_ft_enabled', 'true');
-      }
-      if (url.includes('economist.com')) {
-        localStorage.setItem('bpc_economist_enabled', 'true');
-      }
-      
-      // Set flag for BPC to detect
-      window.__BPC_FORCE_LOAD = true;
-    });
+    page = await browser.newPage();
 
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
@@ -291,11 +217,6 @@ app.get('/fetch', async (req, res) => {
     // Set Google Referer
     await page.setExtraHTTPHeaders({
       'Referer': 'https://www.google.com/'
-    });
-
-    // Basic stealth
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
 
     // Block tracking and paywall scripts
@@ -338,7 +259,6 @@ app.get('/fetch', async (req, res) => {
       timeout: 45000
     });
 
-    // Wait for page to settle
     await wait(3000);
 
     // === CHECK IF BPC IS LOADED ===
@@ -348,38 +268,27 @@ app.get('/fetch', async (req, res) => {
       const bpcFunctions = hasBpc ? Object.keys(window.bpc) : [];
       const hasChrome = typeof window.chrome !== 'undefined';
       const hasChromeRuntime = hasChrome && typeof window.chrome.runtime !== 'undefined';
-      const bpcElements = document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate');
-      
-      const storageKeys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('bpc') || key.includes('bypass'))) {
-          storageKeys.push(key);
-        }
-      }
       
       return {
         hasBpc,
         bpcFunctions,
         hasChrome,
-        hasChromeRuntime,
-        bpcElementCount: bpcElements.length,
-        storageKeys
+        hasChromeRuntime
       };
     });
 
     console.log('📊 BPC Debug:', JSON.stringify(bpcDebug, null, 2));
 
-    // === FORCE BPC ACTIVATION IF NOT LOADED ===
+    // If BPC not loaded, try to find extension and activate
     if (!bpcDebug.hasBpc) {
-      console.log('⚠️ BPC not detected, forcing activation...');
+      console.log('⚠️ BPC not detected, trying to find extension...');
       
-      // Try to find extension ID
+      // Find extension ID
       const targets = await browser.targets();
       let extensionId = null;
       for (const target of targets) {
         const url = target.url();
-        if (url.startsWith('chrome-extension://') && url.includes('background')) {
+        if (url.startsWith('chrome-extension://')) {
           const match = url.match(/chrome-extension:\/\/([^\/]+)/);
           if (match) {
             extensionId = match[1];
@@ -389,54 +298,29 @@ app.get('/fetch', async (req, res) => {
         }
       }
       
-      // Force BPC via multiple methods
-      await page.evaluate((extId) => {
-        // Method 1: Dispatch events
-        document.dispatchEvent(new Event('bpc-activate'));
-        document.dispatchEvent(new CustomEvent('bpc-activate', { 
-          detail: { action: 'bypass', force: true } 
-        }));
-        
-        // Method 2: Click BPC buttons
-        document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate, [data-bpc-action="bypass"]').forEach(el => {
-          el.click();
-        });
-        
-        // Method 3: Try chrome.runtime if available
-        if (typeof chrome !== 'undefined' && chrome.runtime && extId) {
-          try {
-            chrome.runtime.sendMessage(extId, { action: 'activate' });
-          } catch(e) {}
-        }
-        
-        // Method 4: Click common paywall bypass buttons
-        document.querySelectorAll('button, a').forEach(el => {
-          const text = el.textContent.toLowerCase();
-          if (text.includes('continue reading') || 
-              text.includes('read more') || 
-              text.includes('bypass') ||
-              text.includes('show full article') ||
-              text.includes('view full')) {
-            el.click();
+      if (extensionId) {
+        // Try to activate via extension
+        await page.evaluate((extId) => {
+          // Try chrome.runtime
+          if (typeof chrome !== 'undefined' && chrome.runtime) {
+            try {
+              chrome.runtime.sendMessage(extId, { action: 'activate' });
+            } catch(e) {}
           }
-        });
-      }, extensionId);
-      
-      await wait(3000);
-      
-      // Check again
-      const bpcAfter = await page.evaluate(() => {
-        return {
-          hasBpc: typeof window.bpc !== 'undefined',
-          storageItems: localStorage.getItem('bpc_enabled')
-        };
-      });
-      console.log('📊 BPC After force:', JSON.stringify(bpcAfter, null, 2));
+          
+          // Dispatch events
+          document.dispatchEvent(new Event('bpc-activate'));
+          document.dispatchEvent(new CustomEvent('bpc-activate', { 
+            detail: { action: 'bypass', force: true } 
+          }));
+          
+          // Click BPC buttons
+          document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate').forEach(el => el.click());
+        }, extensionId);
+        
+        await wait(3000);
+      }
     }
-
-    // Wait for BPC
-    console.log('⏳ Waiting for BPC to bypass paywall...');
-    await wait(5000);
 
     // Apply bypasses
     console.log('🔧 Applying bypasses...');
