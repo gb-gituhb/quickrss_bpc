@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 3000;
 
 const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-chrome-clean-master');
 
-// Root route handler to completely eliminate base URL 404 errors
 app.get('/', (req, res) => {
   res.status(200).send('QuickRSS BPC Proxy Service is active. Send requests to /fetch?url=YOUR_ENCODED_URL');
 });
