@@ -9,6 +9,16 @@ const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-ch
 let isProcessing = false;
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Force garbage collection
+const forceGC = () => {
+  if (global.gc) {
+    try {
+      global.gc();
+      console.log('🧹 GC triggered');
+    } catch (e) {}
+  }
+};
+
 app.get('/', (req, res) => {
   res.status(200).send('Active');
 });
@@ -50,7 +60,6 @@ app.get('/fetch', async (req, res) => {
         '--disable-backgrounding-occluded-windows',
         '--disable-breakpad',
         '--disable-client-side-phishing-detection',
-        '--disable-component-extensions-with-background-pages',
         '--disable-default-apps',
         '--disable-hang-monitor',
         '--disable-ipc-flooding-protection',
@@ -63,14 +72,19 @@ app.get('/fetch', async (req, res) => {
         '--password-store=basic',
         '--use-mock-keychain',
         '--disable-web-security',
-        '--disable-features=BlockInsecurePrivateNetworkRequests'
+        '--disable-features=BlockInsecurePrivateNetworkRequests',
+        '--disable-jit', // Reduce memory
+        '--disable-accelerated-2d-canvas',
+        '--disable-accelerated-jpeg-decoding',
+        '--disable-accelerated-mjpeg-decode',
+        '--disable-accelerated-video-decode'
       ],
       customConfig: {
         chromePath: '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
         defaultViewport: {
-          width: 1280,
-          height: 720
+          width: 1024,
+          height: 600
         }
       }
     });
@@ -78,156 +92,81 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    // Wait for extension to load
-    await wait(3000);
+    // Wait for extension
+    await wait(2000);
 
-    // Set user agent - Googlebot for better bypass
+    // Minimal bypass - just the essentials
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
 
-    // Additional stealth
+    // Basic stealth
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      window.chrome = { runtime: {} };
     });
 
-    // Set extra headers
-    await page.setExtraHTTPHeaders({
-      'Referer': 'https://www.google.com/'
-    });
-
-    // Block paywall scripts
+    // Minimal request blocking
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const url = req.url().toLowerCase();
-      // Block known paywall and tracking scripts
-      if (url.includes('paywall') || 
-          url.includes('subscription') || 
-          url.includes('cxense') || 
-          url.includes('cloudflare') ||
-          url.includes('google-analytics') ||
-          url.includes('googletagmanager')) {
+      // Block ONLY paywall scripts to save memory
+      if (url.includes('paywall') || url.includes('subscription') || url.includes('cxense')) {
         req.abort();
       } else {
         req.continue();
       }
     });
 
-    // Navigate
+    // Navigate with shorter timeout
     console.log('⏳ Navigating...');
     await page.goto(targetUrl, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
+      waitUntil: 'domcontentloaded', // Faster than networkidle2
+      timeout: 30000
     });
 
-    await wait(3000);
+    await wait(2000);
 
-    // Comprehensive bypass
-    console.log('🔧 Applying bypasses...');
+    // Simplified bypass
     await page.evaluate(() => {
       const url = window.location.href;
       
-      // === SITE-SPECIFIC COOKIES ===
-      // NY Times
+      // Set essential cookies
       if (url.includes('nytimes.com')) {
         document.cookie = "nyt_cc=bypass; path=/; domain=.nytimes.com";
-        document.cookie = "nyt_metered=0; path=/; domain=.nytimes.com";
       }
-      
-      // WSJ
       if (url.includes('wsj.com')) {
         document.cookie = "wsj_cc=bypass; path=/; domain=.wsj.com";
-        document.cookie = "wsj_article_access=free; path=/; domain=.wsj.com";
       }
-      
-      // Bloomberg
       if (url.includes('bloomberg.com')) {
         document.cookie = "bb_article_access=free; path=/; domain=.bloomberg.com";
       }
       
-      // FT
-      if (url.includes('ft.com')) {
-        document.cookie = "ft_subscriber=free; path=/; domain=.ft.com";
-      }
+      // Remove paywall overlays
+      document.querySelectorAll('.paywall, .subscription-wall, [class*="paywall"]').forEach(el => el.remove());
       
-      // === PAYWALL OVERLAY REMOVAL ===
-      const overlaySelectors = [
-        '.paywall', '.subscription-wall', '.premium-wall', '.metered-content',
-        '.gateway', '.wsj-paywall', '.bloomberg-paywall', '.ft-paywall',
-        '[class*="paywall"]', '[id*="paywall"]', '[class*="metered"]',
-        '.css-1l7c0f9', '.subscription-overlay'
-      ];
-      
-      overlaySelectors.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => el.remove());
+      // Unhide content
+      document.querySelectorAll('.article-content, .story-content, .content, article p').forEach(el => {
+        el.style.display = 'block';
+        el.style.visibility = 'visible';
+        el.style.maxHeight = 'none';
       });
       
-      // === UNHIDE CONTENT ===
-      const contentSelectors = [
-        '.article-content', '.post-content', '.story-content', '.content',
-        '.premium-content', 'article p', '.story-body', '.css-1l7c0f9',
-        '.article-body', '.entry-content'
-      ];
-      
-      contentSelectors.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => {
-          el.style.display = 'block';
-          el.style.visibility = 'visible';
-          el.style.opacity = '1';
-          el.style.maxHeight = 'none';
-          el.style.overflow = 'visible';
-          el.style.height = 'auto';
-        });
-      });
-      
-      // === REMOVE BLUR ===
+      // Remove blur
       document.querySelectorAll('[style*="blur"]').forEach(el => {
         el.style.filter = 'none';
-        el.style.backdropFilter = 'none';
-        el.style.blur = '0px';
       });
       
-      // === REMOVE OVERLAY ELEMENTS ===
-      document.querySelectorAll('[style*="overflow:hidden"], [style*="position:fixed"]').forEach(el => {
-        if (el.style.zIndex && parseInt(el.style.zIndex) > 100) {
-          el.style.display = 'none';
-        }
-      });
-      
-      // === RESTORE SCROLLING ===
-      document.body.style.overflow = 'auto';
-      document.documentElement.style.overflow = 'auto';
-      
-      // === REMOVE ADS AND POPUPS ===
-      document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"]').forEach(el => el.remove());
-      document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => el.remove());
-      document.querySelectorAll('[class*="cookie"], [id*="cookie"]').forEach(el => el.remove());
-      
-      // === REMOVE IMAGES ===
+      // Remove images
       document.querySelectorAll('img').forEach(el => el.remove());
     });
 
-    await wait(5000);
-
-    // Handle Cloudflare
-    const pageContent = await page.content();
-    if (pageContent.includes('cf-wrapper') || pageContent.includes('Are you a robot') || pageContent.includes('challenge-form')) {
-      console.log('⚠️ Cloudflare detected, waiting...');
-      await wait(15000);
-      
-      await page.evaluate(() => {
-        document.querySelectorAll('button, input[type="submit"]').forEach(btn => {
-          const text = btn.textContent.toLowerCase();
-          if (text.includes('verify') || text.includes('continue')) {
-            btn.click();
-          }
-        });
-      });
-      
-      await wait(5000);
-    }
+    await wait(3000);
 
     const htmlContent = await page.content();
-    await browser.close();
+    
+    // Aggressive cleanup
+    await page.close().catch(() => {});
+    await browser.close().catch(() => {});
+    forceGC();
+    
     isProcessing = false;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -237,12 +176,20 @@ app.get('/fetch', async (req, res) => {
     if (browser) {
       await browser.close().catch(() => {});
     }
+    if (page) {
+      await page.close().catch(() => {});
+    }
+    forceGC();
     isProcessing = false;
     res.status(500).send(`Error: ${error.message}`);
   }
 });
 
+// Periodic memory cleanup
+setInterval(forceGC, 30000);
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`✅ BPC Extension path: ${EXTENSION_PATH}`);
+  console.log(`⚠️ Memory limit: 512MB`);
 });
