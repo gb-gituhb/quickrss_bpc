@@ -182,6 +182,7 @@ app.get('/fetch', async (req, res) => {
       });
 
       const cleanHtml = await page.content();
+      console.log('✅ Archive cleaned, returning response');  // <-- ADDED
       
       await page.close().catch(() => {});
       await browser.close().catch(() => {});
@@ -296,6 +297,7 @@ app.get('/fetch', async (req, res) => {
       waitUntil: 'domcontentloaded',
       timeout: 45000
     });
+    console.log('✅ Page loaded successfully');  // <-- ADDED
 
     await wait(3000);
 
@@ -358,6 +360,7 @@ app.get('/fetch', async (req, res) => {
     await wait(3000);
 
     const htmlContent = await page.content();
+    console.log('✅ BPC content extracted, returning response');  // <-- ADDED
     
     await page.close().catch(() => {});
     await browser.close().catch(() => {});
