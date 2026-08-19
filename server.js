@@ -198,11 +198,25 @@ app.get('/fetch', async (req, res) => {
       // ===== KOREADER: Extract from article container only =====
       if (isKOReader) {
         const textContent = await page.evaluate(() => {
-          // Find article container
+          // Find article container - Guardian-specific selectors
           const articleSelectors = [
+            // Generic
             '.article-body', '.article-content', '.post-content', '.story-content', 
             '.content', 'article', '.main-content', '.entry-content', '.story-body',
-            '.article-body', '#content', '.body-content', '.ArticleBody'
+            '.article-body', '#content', '.body-content', '.ArticleBody',
+            // Guardian specific
+            '.dcr-article-body',
+            '.dcr-body',
+            '.article-body-commercial-selector',
+            '[data-gu-metric="article-body"]',
+            '.js-article-body',
+            '.article__body',
+            '.article__content',
+            '.dcr-article',
+            '.content--article-body',
+            // Fallback
+            '.article',
+            '[role="article"]'
           ];
           let articleElement = null;
           for (const selector of articleSelectors) {
@@ -212,6 +226,19 @@ app.get('/fetch', async (req, res) => {
               break;
             }
           }
+          
+          // If still not found, find by paragraphs
+          if (!articleElement) {
+            const paragraphs = document.querySelectorAll('p');
+            if (paragraphs.length > 5) {
+              const parent = paragraphs[0]?.closest('div, section, article, main');
+              if (parent) {
+                articleElement = parent;
+              }
+            }
+          }
+          
+          // If still not found, use body
           if (!articleElement) {
             articleElement = document.body;
           }
@@ -429,11 +456,25 @@ app.get('/fetch', async (req, res) => {
     // ============================================================
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
-        // Find article container
+        // Find article container - Guardian-specific selectors
         const articleSelectors = [
+          // Generic
           '.article-body', '.article-content', '.post-content', '.story-content', 
           '.content', 'article', '.main-content', '.entry-content', '.story-body',
-          '.article-body', '#content', '.body-content', '.ArticleBody'
+          '.article-body', '#content', '.body-content', '.ArticleBody',
+          // Guardian specific
+          '.dcr-article-body',
+          '.dcr-body',
+          '.article-body-commercial-selector',
+          '[data-gu-metric="article-body"]',
+          '.js-article-body',
+          '.article__body',
+          '.article__content',
+          '.dcr-article',
+          '.content--article-body',
+          // Fallback
+          '.article',
+          '[role="article"]'
         ];
         let articleElement = null;
         for (const selector of articleSelectors) {
@@ -443,6 +484,19 @@ app.get('/fetch', async (req, res) => {
             break;
           }
         }
+        
+        // If still not found, find by paragraphs
+        if (!articleElement) {
+          const paragraphs = document.querySelectorAll('p');
+          if (paragraphs.length > 5) {
+            const parent = paragraphs[0]?.closest('div, section, article, main');
+            if (parent) {
+              articleElement = parent;
+            }
+          }
+        }
+        
+        // If still not found, use body
         if (!articleElement) {
           articleElement = document.body;
         }
