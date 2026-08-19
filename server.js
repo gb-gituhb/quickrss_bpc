@@ -180,140 +180,53 @@ app.get('/fetch', async (req, res) => {
     console.log('⏳ Waiting for BPC bypass...');
     await wait(3000);
 
-    // CLEAN TEXT EXTRACTION - FIXED
-    console.log('📝 Extracting clean text...');
-    const textContent = await page.evaluate(() => {
-      // Find the main article content
-      function getArticleText() {
-        // Try common article selectors
-        const selectors = [
-          'article',
-          '.article-body',
-          '.article-content',
-          '.content--article',
-          '.post-content',
-          '.story-content',
-          '.entry-content',
-          '.main-content',
-          '#article-body',
-          '#main-content',
-          '.article__body',
-          '.article__content',
-          '.story-body',
-          '.story__body'
-        ];
+    // Get the FULL HTML content (like BPC extension does)
+    console.log('📝 Extracting HTML...');
+    const htmlContent = await page.content();
+
+    // Clean up the HTML - remove unnecessary elements
+    const cleanHtml = await page.evaluate(() => {
+      // Remove scripts
+      document.querySelectorAll('script').forEach(el => el.remove());
+      
+      // Remove styles (keep inline styles for layout)
+      document.querySelectorAll('style').forEach(el => el.remove());
+      
+      // Remove ads
+      document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"], [class*="cookie"]').forEach(el => el.remove());
+      
+      // Remove nav, footer, header if they're not part of article
+      const article = document.querySelector('article');
+      if (article) {
+        // If we have an article, clean within it
+        article.querySelectorAll('nav, footer, header, aside').forEach(el => el.remove());
         
-        for (const selector of selectors) {
-          const element = document.querySelector(selector);
-          if (element) {
-            // Get all paragraphs
-            const paragraphs = element.querySelectorAll('p');
-            if (paragraphs.length > 0) {
-              return Array.from(paragraphs)
-                .map(p => p.textContent.trim())
-                .filter(text => text.length > 20) // Filter short text
-                .join('\n\n');
-            }
-            // Fallback to inner text
-            return element.innerText || element.textContent || '';
+        // Remove any empty elements
+        article.querySelectorAll('*').forEach(el => {
+          if (el.textContent.trim() === '' && el.children.length === 0) {
+            el.remove();
           }
-        }
-        
-        return '';
+        });
       }
-
-      // Get title
-      function getTitle() {
-        const titleSelectors = [
-          'h1',
-          '.article-title',
-          '.headline',
-          '.story-headline',
-          '.entry-title',
-          '.post-title'
-        ];
-        
-        for (const selector of titleSelectors) {
-          const element = document.querySelector(selector);
-          if (element) {
-            return element.textContent.trim();
-          }
-        }
-        return document.title || '';
-      }
-
-      // Get author
-      function getAuthor() {
-        const authorSelectors = [
-          '.author',
-          '.byline',
-          '.article-author',
-          '.story-author',
-          '.entry-author',
-          '.post-author',
-          '[rel="author"]'
-        ];
-        
-        for (const selector of authorSelectors) {
-          const element = document.querySelector(selector);
-          if (element) {
-            return element.textContent.trim();
-          }
-        }
-        return '';
-      }
-
-      // Get date
-      function getDate() {
-        const dateSelectors = [
-          'time',
-          '.date',
-          '.published-date',
-          '.article-date',
-          '.story-date',
-          '.entry-date',
-          '.post-date',
-          '[datetime]'
-        ];
-        
-        for (const selector of dateSelectors) {
-          const element = document.querySelector(selector);
-          if (element) {
-            return element.textContent.trim() || element.getAttribute('datetime') || '';
-          }
-        }
-        return '';
-      }
-
-      const title = getTitle();
-      const author = getAuthor();
-      const date = getDate();
-      const content = getArticleText();
-
-      return {
-        title: title,
-        author: author,
-        date: date,
-        content: content,
-        url: window.location.href
-      };
+      
+      return document.documentElement.outerHTML;
     });
 
-    console.log(`✅ Extracted ${textContent.content.length} characters`);
-    console.log(`📄 Title: ${textContent.title}`);
+    console.log(`✅ Extracted ${cleanHtml.length} characters of HTML`);
 
     await browser.close();
     isProcessing = false;
 
-    res.setHeader('Content-Type', 'application/json');
-    res.json(textContent);
+    // Return HTML with proper content type
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(cleanHtml);
   } catch (error) {
     console.error('❌ Error:', error.message);
     if (browser) {
       await browser.close().catch(() => {});
     }
     isProcessing = false;
-    res.status(500).json({ error: error.message });
+    res.status(500).send(`Error: ${error.message}`);
   }
 });
 
