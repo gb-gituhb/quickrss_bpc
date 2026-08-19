@@ -44,10 +44,9 @@ app.get('/fetch', async (req, res) => {
   try {
     console.log(`🌐 Fetching: ${targetUrl}`);
 
-    // === ARCHIVE-FIRST STRATEGY (Working archives only) ===
+    // === ARCHIVE-FIRST STRATEGY ===
     console.log('📚 Trying archive-first approach...');
     
-    // Only use archives that work on Render
     const archiveUrls = [
       `https://web.archive.org/web/2/${targetUrl}`,
       `https://web.archive.org/web/20260819000000/${targetUrl}`,
@@ -64,13 +63,12 @@ app.get('/fetch', async (req, res) => {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
           },
-          signal: AbortSignal.timeout(10000) // 10 second timeout
+          signal: AbortSignal.timeout(10000)
         });
         
         if (response.ok) {
           const html = await response.text();
           
-          // Check if archive actually has content
           if (!html.includes('does not exist') && 
               !html.includes('Not Found') && 
               !html.includes('404') &&
@@ -142,22 +140,16 @@ app.get('/fetch', async (req, res) => {
       browser = response.browser;
       page = response.page;
 
-      // Load the archive content
       await page.setContent(archiveContent, {
         waitUntil: 'domcontentloaded'
       });
 
       await wait(2000);
 
-      // Clean archive content
       await page.evaluate(() => {
-        // Remove archive-specific elements
         document.querySelectorAll('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').forEach(el => el.remove());
-        
-        // Remove images
         document.querySelectorAll('img').forEach(el => el.remove());
         
-        // Extract main content
         const contentSelectors = [
           '.article-content', '.post-content', '.story-content', '.content',
           'article', '.main-content', '.entry-content', '.story-body',
@@ -180,7 +172,6 @@ app.get('/fetch', async (req, res) => {
           }
         }
         
-        // If no content container found, show all paragraphs
         if (!contentFound) {
           const paragraphs = document.querySelectorAll('p');
           if (paragraphs.length > 3) {
@@ -191,7 +182,6 @@ app.get('/fetch', async (req, res) => {
           }
         }
         
-        // Remove any remaining overlays
         document.querySelectorAll('[class*="paywall"], [class*="subscription"]').forEach(el => el.remove());
       });
 
@@ -265,6 +255,50 @@ app.get('/fetch', async (req, res) => {
     console.log('⏳ Waiting for extension to load...');
     await wait(3000);
 
+    // === CHECK IF BPC IS LOADED ===
+    console.log('🔍 Checking BPC status...');
+    const bpcDebug = await page.evaluate(() => {
+      const hasBpc = typeof window.bpc !== 'undefined';
+      const bpcFunctions = hasBpc ? Object.keys(window.bpc) : [];
+      const hasChrome = typeof window.chrome !== 'undefined';
+      const hasChromeRuntime = hasChrome && typeof window.chrome.runtime !== 'undefined';
+      const bpcElements = document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate');
+      
+      const storageKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('bpc') || key.includes('bypass'))) {
+          storageKeys.push(key);
+        }
+      }
+      
+      return {
+        hasBpc,
+        bpcFunctions,
+        hasChrome,
+        hasChromeRuntime,
+        bpcElementCount: bpcElements.length,
+        storageKeys
+      };
+    });
+
+    console.log('📊 BPC Debug:', JSON.stringify(bpcDebug, null, 2));
+
+    // === FORCE BPC ACTIVATION IF NOT LOADED ===
+    if (!bpcDebug.hasBpc) {
+      console.log('⚠️ BPC not detected, forcing activation...');
+      await page.evaluate(() => {
+        // Try to trigger BPC manually
+        document.dispatchEvent(new Event('bpc-activate'));
+        document.dispatchEvent(new CustomEvent('bpc-activate', { detail: { action: 'bypass' } }));
+        
+        // Try to find and click BPC buttons
+        document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate, [data-bpc-action="bypass"]').forEach(el => {
+          el.click();
+        });
+      });
+    }
+
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
 
@@ -284,13 +318,11 @@ app.get('/fetch', async (req, res) => {
       const resourceType = req.resourceType();
       const url = req.url().toLowerCase();
       
-      // Block images to save memory
       if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
         req.abort();
         return;
       }
       
-      // Block tracking and paywall scripts
       if (url.includes('paywall') || 
           url.includes('subscription') || 
           url.includes('cxense') ||
@@ -387,7 +419,7 @@ app.get('/fetch', async (req, res) => {
       document.body.style.overflow = 'auto';
       document.documentElement.style.overflow = 'auto';
       
-      // Remove images (in case any slipped through)
+      // Remove images
       document.querySelectorAll('img').forEach(el => el.remove());
     });
 
