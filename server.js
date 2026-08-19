@@ -167,15 +167,16 @@ app.get('/fetch', async (req, res) => {
       }
     });
 
-    // CRITICAL FIX: ALLOW EVERYTHING EXCEPT IMAGES AND VIDEOS
+    // CRITICAL: Block ONLY images, media, video - Allow everything else
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const resourceType = req.resourceType();
-      // Block ONLY heavy resources
-      if (['image', 'media', 'video', 'eventsource', 'websocket'].includes(resourceType)) {
+      // Block ONLY images, media, video to save bandwidth/memory
+      if (['image', 'media', 'video'].includes(resourceType)) {
         req.abort();
       } else {
-        req.continue(); // Allow everything else: CSS, Fonts, JS, XHR
+        // Allow: document, stylesheet, font, script, xhr, fetch, etc.
+        req.continue();
       }
     });
 
@@ -215,7 +216,7 @@ app.get('/fetch', async (req, res) => {
       console.log('✅ No Cloudflare detected');
     }
 
-    // ONLY REMOVE ADS AND POPUPS - KEEP EVERYTHING ELSE
+    // Remove ads, popups, but keep styles
     await page.evaluate(() => {
       // Remove ads
       document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"]').forEach(el => el.remove());
@@ -223,15 +224,20 @@ app.get('/fetch', async (req, res) => {
       // Remove popups
       document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => el.remove());
       
-      // Remove newsletter signups (but keep the text content)
+      // Remove newsletter signups
       document.querySelectorAll('[class*="newsletter"], [class*="signup"]').forEach(el => el.remove());
       
       // Remove cookie notices
       document.querySelectorAll('[class*="cookie"], [id*="cookie"]').forEach(el => el.remove());
+      
+      // Remove image placeholders (alt text for blocked images)
+      document.querySelectorAll('img').forEach(el => {
+        el.remove();
+      });
     });
 
-    // Get the FULL HTML with ALL styles preserved
-    console.log('📝 Extracting full HTML with styles...');
+    // Get the FULL HTML with ALL styles preserved, images removed
+    console.log('📝 Extracting full HTML with styles (images stripped)...');
     const htmlContent = await page.content();
 
     console.log(`✅ Extracted ${htmlContent.length} characters`);
@@ -239,7 +245,7 @@ app.get('/fetch', async (req, res) => {
     await browser.close();
     isProcessing = false;
 
-    // Return styled HTML
+    // Return styled HTML without images
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(htmlContent);
   } catch (error) {
