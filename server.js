@@ -1,11 +1,6 @@
 const express = require('express');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const { connect } = require('puppeteer-real-browser');
 const path = require('path');
-const fs = require('fs');
-
-// Add stealth plugin
-puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,16 +8,6 @@ const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-ch
 
 let isProcessing = false;
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-function verifyExtension() {
-  const manifestPath = path.join(EXTENSION_PATH, 'manifest.json');
-  if (!fs.existsSync(manifestPath)) {
-    console.error('❌ Extension manifest not found at:', manifestPath);
-    return false;
-  }
-  console.log('✅ Extension found at:', EXTENSION_PATH);
-  return true;
-}
 
 app.get('/', (req, res) => {
   res.status(200).send('Active');
@@ -36,7 +21,7 @@ app.get('/fetch', async (req, res) => {
   }
 
   if (isProcessing) {
-    return res.status(429).send('Server is busy processing another request. Please retry in 10 seconds.');
+    return res.status(429).send('Server is busy. Please retry.');
   }
 
   isProcessing = true;
@@ -45,10 +30,10 @@ app.get('/fetch', async (req, res) => {
   try {
     console.log(`🌐 Fetching: ${targetUrl}`);
 
-    // Launch with stealth and BPC extension
-    browser = await puppeteer.launch({
+    const response = await connect({
       headless: false,
-      executablePath: '/usr/bin/chromium',
+      turnstile: true,
+      fingerprint: true,
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
@@ -80,16 +65,30 @@ app.get('/fetch', async (req, res) => {
         '--disable-web-security',
         '--disable-features=BlockInsecurePrivateNetworkRequests'
       ],
-      defaultViewport: {
-        width: 1280,
-        height: 720
+      customConfig: {
+        chromePath: '/usr/bin/chromium',
+        ignoreHTTPSErrors: true,
+        defaultViewport: {
+          width: 1280,
+          height: 720
+        }
       }
     });
 
-    page = await browser.newPage();
+    browser = response.browser;
+    page = response.page;
+
+    // Wait for extension
+    await wait(3000);
 
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    // Basic stealth
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = { runtime: {} };
+    });
 
     // Navigate
     console.log('⏳ Navigating...');
@@ -98,61 +97,26 @@ app.get('/fetch', async (req, res) => {
       timeout: 60000
     });
 
-    // Wait for page to stabilize
-    console.log('⏳ Waiting for page to stabilize...');
     await wait(3000);
 
-    // FORCE BPC ACTIVATION
-    console.log('🔧 Forcing BPC activation...');
+    // Force BPC activation
+    console.log('🔧 Activating BPC...');
     await page.evaluate(() => {
-      // Try to trigger BPC manually
+      // Try BPC methods
       if (window.bpc) {
-        console.log('BPC found, activating...');
         if (window.bpc.bypass) window.bpc.bypass();
         if (window.bpc.activate) window.bpc.activate();
       }
       
-      // Dispatch custom event
-      document.dispatchEvent(new Event('bpc-activate'));
-      document.dispatchEvent(new CustomEvent('bpc-activate', { 
-        detail: { action: 'bypass' } 
-      }));
-      
-      // Click any BPC buttons
-      document.querySelectorAll('[data-bpc], .bpc-bypass, [data-bpc-action="bypass"]').forEach(el => {
-        el.click();
-      });
-      
-      // Try to find and click paywall bypass buttons
-      const bypassButtons = document.querySelectorAll('button, a');
-      bypassButtons.forEach(btn => {
-        const text = btn.textContent.toLowerCase();
-        if (text.includes('continue reading') || 
-            text.includes('read more') || 
-            text.includes('bypass') ||
-            text.includes('subscribe') && text.includes('free')) {
-          btn.click();
-        }
-      });
-      
-      // Remove common paywall overlays
-      const overlaySelectors = [
-        '.paywall',
-        '.subscription-wall',
-        '.premium-wall',
-        '.metered-content',
-        '.gateway',
-        '[class*="paywall"]',
-        '[id*="paywall"]',
-        '.wsj-paywall',
-        '.bloomberg-paywall',
-        '.ft-paywall'
+      // Remove paywall overlays
+      const selectors = [
+        '.paywall', '.subscription-wall', '.premium-wall', 
+        '.metered-content', '.gateway', '.wsj-paywall',
+        '.bloomberg-paywall', '.ft-paywall',
+        '[class*="paywall"]', '[id*="paywall"]'
       ];
-      
-      overlaySelectors.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => {
-          el.remove();
-        });
+      selectors.forEach(sel => {
+        document.querySelectorAll(sel).forEach(el => el.remove());
       });
       
       // Show hidden content
@@ -162,61 +126,38 @@ app.get('/fetch', async (req, res) => {
         el.style.opacity = '1';
         el.style.maxHeight = 'none';
         el.style.overflow = 'visible';
-        el.style.height = 'auto';
       });
       
       // Remove blur
-      document.querySelectorAll('[style*="blur"], [class*="blur"]').forEach(el => {
+      document.querySelectorAll('[style*="blur"]').forEach(el => {
         el.style.filter = 'none';
         el.style.backdropFilter = 'none';
-        el.style.blur = '0px';
       });
     });
 
-    // Wait for BPC to work
-    console.log('⏳ Waiting for BPC to bypass...');
     await wait(5000);
 
-    // Check for Cloudflare
+    // Handle Cloudflare
     const pageContent = await page.content();
-    const hasCloudflare = pageContent.includes('cf-wrapper') || 
-                         pageContent.includes('challenge-form') ||
-                         pageContent.includes('Are you a robot');
-
-    if (hasCloudflare) {
-      console.log('⚠️ Cloudflare detected! Waiting for bypass...');
+    if (pageContent.includes('cf-wrapper') || pageContent.includes('Are you a robot')) {
+      console.log('⚠️ Cloudflare detected, waiting...');
       await wait(15000);
       
       await page.evaluate(() => {
-        const buttons = document.querySelectorAll('button, input[type="submit"]');
-        buttons.forEach(btn => {
-          const text = btn.textContent.toLowerCase();
-          if (text.includes('verify') || text.includes('continue')) {
-            btn.click();
-          }
+        document.querySelectorAll('button').forEach(btn => {
+          if (btn.textContent.toLowerCase().includes('verify')) btn.click();
         });
       });
       
       await wait(5000);
-    } else {
-      console.log('✅ No Cloudflare detected');
     }
 
-    // Remove ads and popups
+    // Clean up: remove ads, images, popups
     await page.evaluate(() => {
-      document.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"]').forEach(el => el.remove());
-      document.querySelectorAll('[class*="popup"], [class*="modal"], [class*="overlay"]').forEach(el => el.remove());
-      document.querySelectorAll('[class*="cookie"], [id*="cookie"]').forEach(el => el.remove());
-      
-      // Remove images
-      document.querySelectorAll('img').forEach(el => el.remove());
+      document.querySelectorAll('[class*="ad"], [id*="ad"], img, [class*="popup"], [class*="modal"], [class*="cookie"]').forEach(el => el.remove());
     });
 
-    console.log('📝 Extracting HTML...');
     const htmlContent = await page.content();
-
-    console.log(`✅ Extracted ${htmlContent.length} characters`);
-
     await browser.close();
     isProcessing = false;
 
@@ -224,9 +165,7 @@ app.get('/fetch', async (req, res) => {
     res.send(htmlContent);
   } catch (error) {
     console.error('❌ Error:', error.message);
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
+    if (browser) await browser.close().catch(() => {});
     isProcessing = false;
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -234,5 +173,4 @@ app.get('/fetch', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  verifyExtension();
 });
