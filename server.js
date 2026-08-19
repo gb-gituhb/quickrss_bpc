@@ -78,7 +78,7 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    // Wait for extension
+    // Wait for extension to load
     await wait(3000);
 
     // Set user agent
@@ -99,27 +99,71 @@ app.get('/fetch', async (req, res) => {
 
     await wait(3000);
 
-    // Force BPC activation
-    console.log('🔧 Activating BPC...');
+    // SITE-SPECIFIC BYPASSES
+    console.log('🔧 Applying site-specific bypasses...');
     await page.evaluate(() => {
-      // Try BPC methods
-      if (window.bpc) {
-        if (window.bpc.bypass) window.bpc.bypass();
-        if (window.bpc.activate) window.bpc.activate();
+      const url = window.location.href;
+      
+      // NY Times bypass
+      if (url.includes('nytimes.com')) {
+        document.cookie = "nyt_cc=bypass; path=/; domain=.nytimes.com";
+        document.querySelectorAll('[class*="paywall"], [class*="gate"], [class*="metered"]').forEach(el => el.remove());
+        document.querySelectorAll('.article-content, .story-body, .css-1l7c0f9').forEach(el => {
+          el.style.display = 'block';
+          el.style.maxHeight = 'none';
+          el.style.overflow = 'visible';
+        });
       }
       
-      // Remove paywall overlays
-      const selectors = [
-        '.paywall', '.subscription-wall', '.premium-wall', 
-        '.metered-content', '.gateway', '.wsj-paywall',
-        '.bloomberg-paywall', '.ft-paywall',
-        '[class*="paywall"]', '[id*="paywall"]'
-      ];
-      selectors.forEach(sel => {
-        document.querySelectorAll(sel).forEach(el => el.remove());
-      });
+      // The Hindu bypass
+      if (url.includes('thehindu.com')) {
+        document.querySelectorAll('.paywall, .subscription, .premium-content').forEach(el => el.remove());
+        document.querySelectorAll('.article-content, .story-content').forEach(el => {
+          el.style.display = 'block';
+          el.style.visibility = 'visible';
+        });
+      }
       
-      // Show hidden content
+      // Mint bypass
+      if (url.includes('livemint.com')) {
+        document.querySelectorAll('.paywall, .subscription-wrap, .premium-story').forEach(el => el.remove());
+        document.querySelectorAll('.article-content, .story-content').forEach(el => {
+          el.style.display = 'block';
+          el.style.maxHeight = 'none';
+        });
+      }
+      
+      // FT bypass
+      if (url.includes('ft.com')) {
+        document.querySelectorAll('.paywall, .subscription, .gateway').forEach(el => el.remove());
+        document.querySelectorAll('.article-content, .content, .story').forEach(el => {
+          el.style.display = 'block';
+          el.style.visibility = 'visible';
+        });
+      }
+      
+      // Bloomberg bypass
+      if (url.includes('bloomberg.com')) {
+        document.cookie = "bb_article_access=free; path=/; domain=.bloomberg.com";
+        document.querySelectorAll('.paywall, .subscription, .gateway').forEach(el => el.remove());
+        document.querySelectorAll('.article-content, .story-content').forEach(el => {
+          el.style.display = 'block';
+          el.style.visibility = 'visible';
+        });
+      }
+      
+      // WSJ bypass
+      if (url.includes('wsj.com')) {
+        document.cookie = "wsj_cc=bypass; path=/; domain=.wsj.com";
+        document.querySelectorAll('.wsj-paywall, .subscription, .gateway').forEach(el => el.remove());
+        document.querySelectorAll('.article-content, .story-content').forEach(el => {
+          el.style.display = 'block';
+          el.style.visibility = 'visible';
+        });
+      }
+      
+      // Generic fixes (for all sites)
+      document.querySelectorAll('.paywall, .subscription, .gateway, [class*="paywall"], [id*="paywall"], [class*="metered"]').forEach(el => el.remove());
       document.querySelectorAll('.article-content, .post-content, .story-content, .content, .premium-content, article p').forEach(el => {
         el.style.display = 'block';
         el.style.visibility = 'visible';
@@ -165,7 +209,9 @@ app.get('/fetch', async (req, res) => {
     res.send(htmlContent);
   } catch (error) {
     console.error('❌ Error:', error.message);
-    if (browser) await browser.close().catch(() => {});
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
     isProcessing = false;
     res.status(500).send(`Error: ${error.message}`);
   }
@@ -173,4 +219,5 @@ app.get('/fetch', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ BPC Extension path: ${EXTENSION_PATH}`);
 });
