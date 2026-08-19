@@ -32,34 +32,43 @@ app.get('/fetch', async (req, res) => {
     return res.status(400).send('Missing url parameter.');
   }
 
-  // ===== RESILIENT URL CLEANING =====
-  // Fix malformed URLs from QuickRSS (e.g., "?step=3,https://...")
+  // ===== AGGRESSIVE URL CLEANING =====
   let cleanUrl = targetUrl;
-  
-  // Remove ?step=X, prefix
-  if (cleanUrl.includes('?step=')) {
-    cleanUrl = cleanUrl.replace(/^\?step=\d+,/, '');
-    console.log(`🔧 Cleaned URL from: ${targetUrl}`);
-    console.log(`🔧 To: ${cleanUrl}`);
-  }
-  
-  // Remove any other malformed prefixes (just in case)
-  // If URL contains "?step=3,https://", extract the https:// part
-  if (cleanUrl.includes('?step=3,https://')) {
-    const match = cleanUrl.match(/https?:\/\/[^\s]+/);
+
+  // Log the raw URL for debugging
+  console.log(`📝 Raw URL: ${cleanUrl}`);
+
+  // Remove ?step=X, prefix (works with any number)
+  cleanUrl = cleanUrl.replace(/^\?step=\d+,/, '');
+
+  // Remove any other malformed prefixes
+  cleanUrl = cleanUrl.replace(/^[^:]+:\/\/[^,]+,\s*/, '');
+
+  // If URL still contains ?step= or step=, try to extract the actual URL
+  if (cleanUrl.includes('?step=') || cleanUrl.includes('step=')) {
+    const match = cleanUrl.match(/https?:\/\/[^\s,]+/);
     if (match) {
       cleanUrl = match[0];
       console.log(`🔧 Extracted URL from malformed string: ${cleanUrl}`);
     }
   }
 
+  // Handle URL-encoded characters
+  cleanUrl = decodeURIComponent(cleanUrl);
+
+  // Remove any trailing commas or spaces
+  cleanUrl = cleanUrl.replace(/[,\s]+$/, '');
+
   // Validate URL
   try {
     new URL(cleanUrl);
   } catch (e) {
     console.error(`❌ Invalid URL after cleaning: ${cleanUrl}`);
+    console.error(`❌ Original was: ${targetUrl}`);
     return res.status(400).send('Invalid URL format.');
   }
+
+  console.log(`✅ Clean URL: ${cleanUrl}`);
 
   if (isProcessing) {
     return res.status(429).send('Server is busy. Please retry.');
