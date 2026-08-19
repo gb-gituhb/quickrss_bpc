@@ -38,7 +38,9 @@ app.get('/fetch', async (req, res) => {
   // Handle arrays from malformed query params (QuickRSS sometimes sends arrays)
   if (Array.isArray(cleanUrl)) {
     console.log(`📦 URL is an array with ${cleanUrl.length} items`);
-    cleanUrl = cleanUrl[0] || '';
+    // Join all parts together (they might be split)
+    cleanUrl = cleanUrl.join('');
+    console.log(`🔧 Joined array to: ${cleanUrl}`);
   }
 
   // Handle objects
