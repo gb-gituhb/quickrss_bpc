@@ -1,56 +1,60 @@
 const express = require('express');
-const puppeteer = require('puppeteer-core');
-const path = require('path');
-const TurndownService = require('turndown');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const turndownService = new TurndownService();
-
-// Path to the unzipped BPC extension folder
-const EXTENSION_PATH = path.join(__dirname, 'bpc_extension/bypass-paywalls-chrome-clean-master');
 
 app.get('/fetch', async (req, res) => {
-    const targetUrl = req.query.url;
-    if (!targetUrl) return res.status(400).send('URL required');
+  const targetUrl = req.query.url;
+  if (!targetUrl) {
+    return res.status(400).send('Missing url parameter');
+  }
 
-    let browser;
-    try {
-        browser = await puppeteer.launch({
-            executablePath: '/usr/bin/chromium',
-            headless: 'new',
-            args: [
-                `--disable-extensions-except=${EXTENSION_PATH}`,
-                `--load-extension=${EXTENSION_PATH}`,
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--single-process',
-                '--js-flags="--max-old-space-size=256"'
-            ]
-        });
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      executablePath: '/usr/bin/chromium',
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--start-maximized'
+      ],
+      ignoreDefaultArgs: ['--enable-automation']
+    });
 
-        const pages = await browser.pages();
-        const page = pages.length > 0 ? pages[0] : await browser.newPage();
-        
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-        
-        // Wait for BPC background scripts to clear cookies and unhide DOM elements
-        await new Promise(resolve => setTimeout(resolve, 2500));
-        
-        // Extract HTML and convert to Markdown for KOReader
-        const html = await page.evaluate(() => document.body.innerHTML);
-        const markdown = turndownService.turndown(html);
-        
-        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-        res.send(markdown);
+    const page = await browser.newPage();
+    
+    await page.setViewport({ width: 1920, height: 1080 });
+    
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
+    });
 
-    } catch (error) {
-        res.status(500).send(error.message);
-    } finally {
-        if (browser) await browser.close();
+    await page.goto(targetUrl, {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+
+    const content = await page.content();
+    await browser.close();
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(content);
+  } catch (error) {
+    if (browser) {
+      await browser.close().catch(() => {});
     }
+    res.status(500).send(`Error fetching page: ${error.message}`);
+  }
 });
 
-app.listen(PORT);
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
