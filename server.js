@@ -8,13 +8,17 @@ puppeteer.use(StealthPlugin());
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Path to the cloned BPC extension folder inside the container
 const EXTENSION_PATH = path.join(__dirname, 'bpc_extension/bypass-paywalls-chrome-clean-master');
+
+// Root route handler to fix the 404 error at the base URL
+app.get('/', (req, res) => {
+  res.send('QuickRSS BPC Proxy Service is running. Use /fetch?url=YOUR_ENCODED_URL to proxy pages.');
+});
 
 app.get('/fetch', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) {
-    return res.status(400).send('Missing url parameter');
+    return res.status(400).send('Missing url parameter. Usage: /fetch?url=https://example.com');
   }
 
   let browser;
@@ -51,7 +55,6 @@ app.get('/fetch', async (req, res) => {
       timeout: 30000
     });
 
-    // Wait for BPC background rules/scripts to execute and clean paywalls
     await new Promise(resolve => setTimeout(resolve, 2500));
 
     const content = await page.content();
