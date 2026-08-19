@@ -255,49 +255,35 @@ app.get('/fetch', async (req, res) => {
     console.log('⏳ Waiting for extension to load...');
     await wait(3000);
 
-    // === CHECK IF BPC IS LOADED ===
-    console.log('🔍 Checking BPC status...');
-    const bpcDebug = await page.evaluate(() => {
-      const hasBpc = typeof window.bpc !== 'undefined';
-      const bpcFunctions = hasBpc ? Object.keys(window.bpc) : [];
-      const hasChrome = typeof window.chrome !== 'undefined';
-      const hasChromeRuntime = hasChrome && typeof window.chrome.runtime !== 'undefined';
-      const bpcElements = document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate');
+    // === FORCE BPC VIA STORAGE BEFORE NAVIGATION ===
+    console.log('🔧 Setting BPC preferences...');
+    await page.evaluateOnNewDocument(() => {
+      // This runs before the page loads
+      localStorage.setItem('bpc_enabled', 'true');
+      localStorage.setItem('bpc_auto_bypass', 'true');
+      localStorage.setItem('bpc_auto_remove_paywall', 'true');
       
-      const storageKeys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.includes('bpc') || key.includes('bypass'))) {
-          storageKeys.push(key);
-        }
+      // Set site-specific preferences
+      const url = window.location.href;
+      if (url.includes('wsj.com')) {
+        localStorage.setItem('bpc_wsj_enabled', 'true');
+      }
+      if (url.includes('bloomberg.com')) {
+        localStorage.setItem('bpc_bloomberg_enabled', 'true');
+      }
+      if (url.includes('nytimes.com')) {
+        localStorage.setItem('bpc_nytimes_enabled', 'true');
+      }
+      if (url.includes('ft.com')) {
+        localStorage.setItem('bpc_ft_enabled', 'true');
+      }
+      if (url.includes('economist.com')) {
+        localStorage.setItem('bpc_economist_enabled', 'true');
       }
       
-      return {
-        hasBpc,
-        bpcFunctions,
-        hasChrome,
-        hasChromeRuntime,
-        bpcElementCount: bpcElements.length,
-        storageKeys
-      };
+      // Set flag for BPC to detect
+      window.__BPC_FORCE_LOAD = true;
     });
-
-    console.log('📊 BPC Debug:', JSON.stringify(bpcDebug, null, 2));
-
-    // === FORCE BPC ACTIVATION IF NOT LOADED ===
-    if (!bpcDebug.hasBpc) {
-      console.log('⚠️ BPC not detected, forcing activation...');
-      await page.evaluate(() => {
-        // Try to trigger BPC manually
-        document.dispatchEvent(new Event('bpc-activate'));
-        document.dispatchEvent(new CustomEvent('bpc-activate', { detail: { action: 'bypass' } }));
-        
-        // Try to find and click BPC buttons
-        document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate, [data-bpc-action="bypass"]').forEach(el => {
-          el.click();
-        });
-      });
-    }
 
     // Set user agent
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
@@ -351,6 +337,102 @@ app.get('/fetch', async (req, res) => {
       waitUntil: 'domcontentloaded',
       timeout: 45000
     });
+
+    // Wait for page to settle
+    await wait(3000);
+
+    // === CHECK IF BPC IS LOADED ===
+    console.log('🔍 Checking BPC status...');
+    const bpcDebug = await page.evaluate(() => {
+      const hasBpc = typeof window.bpc !== 'undefined';
+      const bpcFunctions = hasBpc ? Object.keys(window.bpc) : [];
+      const hasChrome = typeof window.chrome !== 'undefined';
+      const hasChromeRuntime = hasChrome && typeof window.chrome.runtime !== 'undefined';
+      const bpcElements = document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate');
+      
+      const storageKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('bpc') || key.includes('bypass'))) {
+          storageKeys.push(key);
+        }
+      }
+      
+      return {
+        hasBpc,
+        bpcFunctions,
+        hasChrome,
+        hasChromeRuntime,
+        bpcElementCount: bpcElements.length,
+        storageKeys
+      };
+    });
+
+    console.log('📊 BPC Debug:', JSON.stringify(bpcDebug, null, 2));
+
+    // === FORCE BPC ACTIVATION IF NOT LOADED ===
+    if (!bpcDebug.hasBpc) {
+      console.log('⚠️ BPC not detected, forcing activation...');
+      
+      // Try to find extension ID
+      const targets = await browser.targets();
+      let extensionId = null;
+      for (const target of targets) {
+        const url = target.url();
+        if (url.startsWith('chrome-extension://') && url.includes('background')) {
+          const match = url.match(/chrome-extension:\/\/([^\/]+)/);
+          if (match) {
+            extensionId = match[1];
+            console.log(`🔌 Found extension: ${extensionId}`);
+            break;
+          }
+        }
+      }
+      
+      // Force BPC via multiple methods
+      await page.evaluate((extId) => {
+        // Method 1: Dispatch events
+        document.dispatchEvent(new Event('bpc-activate'));
+        document.dispatchEvent(new CustomEvent('bpc-activate', { 
+          detail: { action: 'bypass', force: true } 
+        }));
+        
+        // Method 2: Click BPC buttons
+        document.querySelectorAll('[data-bpc], .bpc-bypass, .bpc-activate, [data-bpc-action="bypass"]').forEach(el => {
+          el.click();
+        });
+        
+        // Method 3: Try chrome.runtime if available
+        if (typeof chrome !== 'undefined' && chrome.runtime && extId) {
+          try {
+            chrome.runtime.sendMessage(extId, { action: 'activate' });
+          } catch(e) {}
+        }
+        
+        // Method 4: Click common paywall bypass buttons
+        document.querySelectorAll('button, a').forEach(el => {
+          const text = el.textContent.toLowerCase();
+          if (text.includes('continue reading') || 
+              text.includes('read more') || 
+              text.includes('bypass') ||
+              text.includes('show full article') ||
+              text.includes('view full')) {
+            el.click();
+          }
+        });
+      }, extensionId);
+      
+      await wait(3000);
+      
+      // Check again
+      const bpcAfter = await page.evaluate(() => {
+        return {
+          hasBpc: typeof window.bpc !== 'undefined',
+          storageItems: localStorage.getItem('bpc_enabled')
+        };
+      });
+      console.log('📊 BPC After force:', JSON.stringify(bpcAfter, null, 2));
+    }
 
     // Wait for BPC
     console.log('⏳ Waiting for BPC to bypass paywall...');
