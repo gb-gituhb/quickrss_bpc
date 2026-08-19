@@ -1,14 +1,16 @@
 services:
   - type: web
-    name: quickrss-proxy
-    runtime: node
-    plan: starter  # 512MB plan
-    buildCommand: npm install
-    startCommand: node --max-old-space-size=384 server.js
+    name: quickrss-bpc-proxy
+    runtime: image
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # ✅ REMOVE startCommand - let Dockerfile handle it
+    # ✅ REMOVE NODE_OPTIONS from envVars - Dockerfile handles it
     envVars:
       - key: NODE_ENV
         value: production
       - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
         value: "true"
-      - key: NODE_OPTIONS
-        value: "--max-old-space-size=384 --expose-gc"
+    healthCheckPath: /
+    autoDeploy: true
