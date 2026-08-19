@@ -131,7 +131,7 @@ app.get('/fetch', async (req, res) => {
     }
 
     // ============================================================
-    // PATH 1: ARCHIVE FOUND (No BPC needed)
+    // PATH 1: ARCHIVE FOUND
     // ============================================================
     if (archiveContent) {
       console.log('📝 Cleaning archive content...');
@@ -195,7 +195,6 @@ app.get('/fetch', async (req, res) => {
 
       let finalHtml = await page.content();
       
-      // ===== KOREADER EXTRACTION (from ARCHIVE content) =====
       if (isKOReader) {
         const textContent = await page.evaluate(() => {
           const body = document.body;
@@ -331,7 +330,37 @@ app.get('/fetch', async (req, res) => {
 
     await wait(3000);
 
-    // ===== STANDARD CLEANUP =====
+    // ============================================================
+    // THE FIX: CLICK "CONTINUE READING" TO LOAD FULL CONTENT
+    // ============================================================
+    try {
+      const clicked = await page.evaluate(() => {
+        const buttons = document.querySelectorAll('button, a, div, span, [role="button"]');
+        for (const el of buttons) {
+          const text = el.textContent || '';
+          if (text.trim() === 'Continue Reading' || 
+              text.trim() === 'Continue reading' ||
+              text.includes('Continue Reading') ||
+              text.includes('Continue reading')) {
+            el.click();
+            return true;
+          }
+        }
+        return false;
+      });
+      if (clicked) {
+        console.log('🔘 Clicked "Continue Reading" button - waiting for content to load...');
+        await wait(4000); // Wait for lazy-loaded content
+      } else {
+        console.log('ℹ️ No "Continue Reading" button found');
+      }
+    } catch (e) {
+      console.log('⚠️ Error clicking "Continue Reading":', e.message);
+    }
+
+    // ============================================================
+    // STANDARD CLEANUP
+    // ============================================================
     await page.evaluate(() => {
       document.querySelectorAll('.paywall, .subscription-wall, .premium-wall, .metered-content, .gateway, [class*="paywall"], [id*="paywall"], [class*="subscription"], [id*="subscription"]').forEach(el => el.remove());
       document.querySelectorAll('[class*="continue"], [class*="read-more"]').forEach(el => el.remove());
@@ -371,7 +400,9 @@ app.get('/fetch', async (req, res) => {
 
     let htmlContent = await page.content();
     
-    // ===== KOREADER EXTRACTION (from BPC-PROCESSED page) =====
+    // ============================================================
+    // KOREADER EXTRACTION (with TreeWalker filtering)
+    // ============================================================
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
         const body = document.body;
