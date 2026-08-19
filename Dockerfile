@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Download and extract the native BPC extension with SSL check bypassed
-RUN wget --no-check-certificate https://gitlab.com/magnolia1234/bypass-paywalls-chrome-clean/-/archive/master/bypass-paywalls-chrome-clean-master.zip -O bpc.zip \
+# Download and extract the native BPC extension from the active GitFlic mirror
+RUN wget --no-check-certificate https://gitflic.ru/project/magnolia1234/bypass-paywalls-chrome-clean/archive/master.zip -O bpc.zip \
     && unzip bpc.zip -d bpc_extension \
     && rm bpc.zip
 
