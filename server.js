@@ -30,12 +30,15 @@ async function processQueue() {
   isProcessing = true;
   const { req, res, cleanUrl, isKOReader } = requestQueue.shift();
 
+  let browser = null;
+  let page = null;
+
   try {
     console.log(`⏳ Processing queue (${requestQueue.length} remaining)`);
 
-    // ===== EXTRACT CONTENT =====
-    const browser = await connect({
-      headless: true,
+    // ===== LAUNCH BROWSER =====
+    const response = await connect({
+      headless: false,
       turnstile: true,
       fingerprint: true,
       args: [
@@ -61,7 +64,8 @@ async function processQueue() {
       }
     });
 
-    const page = browser.page;
+    browser = response.browser;
+    page = response.page;
 
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
     await page.setExtraHTTPHeaders({ 'Referer': 'https://www.google.com/' });
@@ -251,24 +255,28 @@ async function processQueue() {
       console.log(`📝 Sending sanitized text to KOReader (${sanitizedText.length} chars)`);
       console.log(`📝 First 300 chars: ${sanitizedText.substring(0, 300)}...`);
 
-      await page.close().catch(() => {});
-      await browser.close().catch(() => {});
-      forceGC();
-
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.send(sanitizedText);
     } else {
       console.log('📝 Sending full HTML for browser');
-      await page.close().catch(() => {});
-      await browser.close().catch(() => {});
-      forceGC();
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(htmlContent);
     }
+
+    // Close browser
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+
+    forceGC();
   } catch (error) {
     console.error('❌ Error processing request:', error.message);
     if (res && !res.headersSent) {
       res.status(500).send(`Error: ${error.message}`);
+    }
+    // Clean up on error
+    if (browser) {
+      await browser.close().catch(() => {});
     }
   } finally {
     isProcessing = false;
