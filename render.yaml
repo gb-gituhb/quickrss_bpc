@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: quickrss-proxy
+    runtime: node
+    plan: starter  # 512MB plan
+    buildCommand: npm install
+    startCommand: node --max-old-space-size=384 server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: "true"
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=384 --expose-gc"
