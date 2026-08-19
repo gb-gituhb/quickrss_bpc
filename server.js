@@ -30,13 +30,215 @@ async function processQueue() {
   isProcessing = true;
   const { req, res, cleanUrl, isKOReader } = requestQueue.shift();
 
-  let browser = null;
+  let browserInstance = null;
   let page = null;
 
   try {
     console.log(`⏳ Processing queue (${requestQueue.length} remaining)`);
 
-    // ===== LAUNCH BROWSER =====
+    // ===== ARCHIVE-FIRST (WAYBACK MACHINE) =====
+    console.log('📚 Trying archive-first approach...');
+    const archiveUrls = [
+      `https://web.archive.org/web/2/${cleanUrl}`,
+      `https://web.archive.org/web/20260819000000/${cleanUrl}`,
+      `https://web.archive.org/web/20260818000000/${cleanUrl}`
+    ];
+
+    let archiveContent = null;
+    let archiveUsed = false;
+
+    for (const archiveUrl of archiveUrls) {
+      try {
+        console.log(`📚 Trying: ${archiveUrl}`);
+        const response = await fetch(archiveUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (response.ok) {
+          const html = await response.text();
+          if (!html.includes('does not exist') && !html.includes('Not Found') && !html.includes('404') && html.length > 5000) {
+            archiveContent = html;
+            console.log(`✅ Archive found at: ${archiveUrl}`);
+            archiveUsed = true;
+            break;
+          }
+        }
+      } catch (archiveError) {
+        console.log(`⚠️ Archive failed: ${archiveUrl} - ${archiveError.message}`);
+      }
+    }
+
+    // ===== IF ARCHIVE FOUND, USE IT =====
+    if (archiveContent) {
+      console.log('📝 Using archive content...');
+
+      const response = await connect({
+        headless: false,
+        turnstile: true,
+        fingerprint: true,
+        args: [
+          `--disable-extensions-except=${EXTENSION_PATH}`,
+          `--load-extension=${EXTENSION_PATH}`,
+          '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
+          '--single-process', '--no-zygote', '--js-flags="--max-old-space-size=128"',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
+          '--disable-breakpad', '--disable-client-side-phishing-detection', '--disable-default-apps',
+          '--disable-hang-monitor', '--disable-ipc-flooding-protection', '--disable-popup-blocking',
+          '--disable-prompt-on-repost', '--disable-renderer-backgrounding', '--disable-sync',
+          '--metrics-recording-only', '--no-first-run', '--password-store=basic', '--use-mock-keychain',
+          '--disable-web-security', '--disable-features=BlockInsecurePrivateNetworkRequests',
+          '--disable-jit', '--disable-accelerated-2d-canvas', '--disable-accelerated-jpeg-decoding',
+          '--disable-accelerated-mjpeg-decode', '--disable-accelerated-video-decode'
+        ],
+        customConfig: {
+          chromePath: '/usr/bin/chromium',
+          ignoreHTTPSErrors: true,
+          defaultViewport: { width: 1024, height: 600 }
+        }
+      });
+
+      browserInstance = response.browser;
+      page = response.page;
+
+      await page.setContent(archiveContent, { waitUntil: 'domcontentloaded' });
+      await wait(2000);
+
+      await page.evaluate(() => {
+        document.querySelectorAll('.ad, .banner, .popup, .cookie, [class*="banner"], [class*="popup"]').forEach(el => el.remove());
+        document.querySelectorAll('img').forEach(el => el.remove());
+        const contentSelectors = ['.article-content', '.post-content', '.story-content', '.content', 'article', '.main-content', '.entry-content', '.story-body', '.article-body', '#content', '.body-content', '.ArticleBody'];
+        let contentFound = false;
+        for (const selector of contentSelectors) {
+          const elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            elements.forEach(el => {
+              el.style.display = 'block';
+              el.style.visibility = 'visible';
+              el.style.maxHeight = 'none';
+              el.style.overflow = 'visible';
+            });
+            contentFound = true;
+            break;
+          }
+        }
+        if (!contentFound) {
+          document.querySelectorAll('p').forEach(p => {
+            p.style.display = 'block';
+            p.style.visibility = 'visible';
+          });
+        }
+        document.querySelectorAll('[class*="paywall"], [class*="subscription"]').forEach(el => el.remove());
+      });
+
+      let contentToSend = await page.content();
+
+      if (isKOReader) {
+        const textContent = await page.evaluate(() => {
+          const articleSelectors = [
+            '.article-body', '.article-content', '.post-content', '.story-content',
+            '.content', 'article', '.main-content', '.entry-content', '.story-body',
+            '.article-body', '#content', '.body-content', '.ArticleBody',
+            '.dcr-article-body', '.dcr-body', '.article-body-commercial-selector',
+            '[data-gu-metric="article-body"]', '.js-article-body', '.article__body',
+            '.article__content', '.dcr-article', '.content--article-body',
+            '.article', '[role="article"]'
+          ];
+          let articleElement = null;
+          for (const selector of articleSelectors) {
+            const el = document.querySelector(selector);
+            if (el) {
+              articleElement = el;
+              break;
+            }
+          }
+          if (!articleElement) {
+            const paragraphs = document.querySelectorAll('p');
+            if (paragraphs.length > 5) {
+              const parent = paragraphs[0]?.closest('div, section, article, main');
+              if (parent) {
+                articleElement = parent;
+              }
+            }
+          }
+          if (!articleElement) {
+            articleElement = document.body;
+          }
+
+          const walker = document.createTreeWalker(
+            articleElement,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: function(node) {
+                const parent = node.parentElement;
+                if (!parent) return NodeFilter.FILTER_REJECT;
+                const tag = parent.tagName.toLowerCase();
+                if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg') {
+                  return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            }
+          );
+          const textParts = [];
+          const seen = new Set();
+          let node;
+          const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
+          while (node = walker.nextNode()) {
+            const text = node.textContent.trim();
+            if (text && !seen.has(text)) {
+              seen.add(text);
+              let shouldSkip = false;
+              for (const phrase of skipPhrases) {
+                if (text.includes(phrase)) { shouldSkip = true; break; }
+              }
+              if (!shouldSkip) {
+                textParts.push(text);
+              }
+            }
+          }
+          if (textParts.length === 0) {
+            document.querySelectorAll('p').forEach(p => {
+              const text = p.textContent.trim();
+              if (text && !seen.has(text)) {
+                seen.add(text);
+                textParts.push(text);
+              }
+            });
+          }
+          return textParts.join('\n\n');
+        });
+
+        contentToSend = textContent
+          .replace(/[^\w\s.,!?;:'"()\-\n]/g, '')
+          .replace(/\n{3,}/g, '\n\n')
+          .replace(/  +/g, ' ')
+          .trim();
+
+        console.log(`📝 Sending sanitized text to KOReader (${contentToSend.length} chars) [ARCHIVE]`);
+        console.log(`📝 First 300 chars: ${contentToSend.substring(0, 300)}...`);
+      } else {
+        console.log('📝 Sending full HTML for browser [ARCHIVE]');
+      }
+
+      res.setHeader('Content-Type', isKOReader ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8');
+      res.send(contentToSend);
+
+      if (browserInstance) {
+        await browserInstance.close().catch(() => {});
+      }
+      forceGC();
+      isProcessing = false;
+      processQueue();
+      return;
+    }
+
+    // ============================================================
+    // ARCHIVE FAILED → FALLBACK TO BPC
+    // ============================================================
+    console.log('📚 Archive failed, falling back to BPC...');
+
     const response = await connect({
       headless: false,
       turnstile: true,
@@ -64,7 +266,7 @@ async function processQueue() {
       }
     });
 
-    browser = response.browser;
+    browserInstance = response.browser;
     page = response.page;
 
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
@@ -166,9 +368,8 @@ async function processQueue() {
 
     await wait(3000);
 
-    let htmlContent = await page.content();
-
-    // ===== KOREADER: Extract text from article container =====
+    // ===== EXTRACT TEXT =====
+    let contentToSend;
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
         const articleSelectors = [
@@ -245,42 +446,38 @@ async function processQueue() {
         return textParts.join('\n\n');
       });
 
-      // Sanitize text
-      let sanitizedText = textContent
+      contentToSend = textContent
         .replace(/[^\w\s.,!?;:'"()\-\n]/g, '')
         .replace(/\n{3,}/g, '\n\n')
         .replace(/  +/g, ' ')
         .trim();
 
-      console.log(`📝 Sending sanitized text to KOReader (${sanitizedText.length} chars)`);
-      console.log(`📝 First 300 chars: ${sanitizedText.substring(0, 300)}...`);
-
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.send(sanitizedText);
+      console.log(`📝 Sending sanitized text to KOReader (${contentToSend.length} chars) [BPC]`);
+      console.log(`📝 First 300 chars: ${contentToSend.substring(0, 300)}...`);
     } else {
-      console.log('📝 Sending full HTML for browser');
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.send(htmlContent);
+      contentToSend = await page.content();
+      console.log('📝 Sending full HTML for browser [BPC]');
     }
 
-    // Close browser
-    if (browser) {
-      await browser.close().catch(() => {});
-    }
+    res.setHeader('Content-Type', isKOReader ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8');
+    res.send(contentToSend);
 
+    if (browserInstance) {
+      await browserInstance.close().catch(() => {});
+    }
     forceGC();
+
   } catch (error) {
     console.error('❌ Error processing request:', error.message);
     if (res && !res.headersSent) {
       res.status(500).send(`Error: ${error.message}`);
     }
-    // Clean up on error
-    if (browser) {
-      await browser.close().catch(() => {});
+    if (browserInstance) {
+      await browserInstance.close().catch(() => {});
     }
   } finally {
     isProcessing = false;
-    processQueue(); // Process next item in queue
+    processQueue();
   }
 }
 
