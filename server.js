@@ -1,11 +1,15 @@
 const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const path = require('path');
 
 puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Path to the cloned BPC extension folder inside the container
+const EXTENSION_PATH = path.join(__dirname, 'bpc_extension/bypass-paywalls-chrome-clean-master');
 
 app.get('/fetch', async (req, res) => {
   const targetUrl = req.query.url;
@@ -19,11 +23,16 @@ app.get('/fetch', async (req, res) => {
       executablePath: '/usr/bin/chromium',
       headless: true,
       args: [
+        `--disable-extensions-except=${EXTENSION_PATH}`,
+        `--load-extension=${EXTENSION_PATH}`,
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
-        '--start-maximized'
+        '--start-maximized',
+        '--disable-dev-shm-usage',
+        '--single-process',
+        '--js-flags="--max-old-space-size=256"'
       ],
       ignoreDefaultArgs: ['--enable-automation']
     });
@@ -41,6 +50,9 @@ app.get('/fetch', async (req, res) => {
       waitUntil: 'networkidle2',
       timeout: 30000
     });
+
+    // Wait for BPC background rules/scripts to execute and clean paywalls
+    await new Promise(resolve => setTimeout(resolve, 2500));
 
     const content = await page.content();
     await browser.close();
