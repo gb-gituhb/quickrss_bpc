@@ -195,7 +195,12 @@ app.get('/fetch', async (req, res) => {
 
       let finalHtml = await page.content();
       
+      // ===== KOREADER EXTRACTION (from archive) =====
       if (isKOReader) {
+        // DEBUG: Log HTML length and check for "Continue Reading"
+        console.log(`📊 Archive HTML length: ${finalHtml.length}`);
+        console.log(`📊 Contains "Continue Reading": ${finalHtml.includes('Continue Reading')}`);
+        
         const textContent = await page.evaluate(() => {
           const body = document.body;
           if (!body) return '';
@@ -242,6 +247,11 @@ app.get('/fetch', async (req, res) => {
           }
           return textParts.join('\n\n');
         });
+        
+        // DEBUG: Log extracted text length
+        console.log(`📊 Extracted text length: ${textContent.length}`);
+        console.log(`📊 First 200 chars: ${textContent.substring(0, 200)}...`);
+        
         const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
         const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
         finalHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}</style></head><body>${htmlBody || '<p>No content extracted</p>'}</body></html>`;
@@ -350,7 +360,7 @@ app.get('/fetch', async (req, res) => {
       });
       if (clicked) {
         console.log('🔘 Clicked "Continue Reading" button - waiting for content to load...');
-        await wait(4000); // Wait for lazy-loaded content
+        await wait(4000);
       } else {
         console.log('ℹ️ No "Continue Reading" button found');
       }
@@ -404,6 +414,10 @@ app.get('/fetch', async (req, res) => {
     // KOREADER EXTRACTION (with TreeWalker filtering)
     // ============================================================
     if (isKOReader) {
+      // DEBUG: Log HTML length and check for "Continue Reading"
+      console.log(`📊 BPC HTML length: ${htmlContent.length}`);
+      console.log(`📊 Contains "Continue Reading": ${htmlContent.includes('Continue Reading')}`);
+      
       const textContent = await page.evaluate(() => {
         const body = document.body;
         if (!body) return '';
@@ -450,6 +464,11 @@ app.get('/fetch', async (req, res) => {
         }
         return textParts.join('\n\n');
       });
+      
+      // DEBUG: Log extracted text length
+      console.log(`📊 Extracted text length: ${textContent.length}`);
+      console.log(`📊 First 200 chars: ${textContent.substring(0, 200)}...`);
+      
       const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
       const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
       htmlContent = `<!DOCTYPE html>
