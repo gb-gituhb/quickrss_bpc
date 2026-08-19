@@ -1,6 +1,10 @@
 const express = require('express');
 const { connect } = require('puppeteer-real-browser');
 const path = require('path');
+const dns = require('dns');
+
+// DNS fix for Render
+dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -40,13 +44,14 @@ app.get('/fetch', async (req, res) => {
   try {
     console.log(`🌐 Fetching: ${targetUrl}`);
 
-    // === ARCHIVE-FIRST STRATEGY ===
+    // === ARCHIVE-FIRST STRATEGY (Working archives only) ===
     console.log('📚 Trying archive-first approach...');
     
+    // Only use archives that work on Render
     const archiveUrls = [
-      `https://archive.is/${targetUrl}`,
-      `https://archive.ph/${targetUrl}`,
-      `https://web.archive.org/web/2/${targetUrl}`
+      `https://web.archive.org/web/2/${targetUrl}`,
+      `https://web.archive.org/web/20260819000000/${targetUrl}`,
+      `https://web.archive.org/web/20260818000000/${targetUrl}`
     ];
 
     let archiveContent = null;
@@ -58,14 +63,18 @@ app.get('/fetch', async (req, res) => {
         const response = await fetch(archiveUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
-          }
+          },
+          signal: AbortSignal.timeout(10000) // 10 second timeout
         });
         
         if (response.ok) {
           const html = await response.text();
           
-          // Check if archive actually has content (not an error page)
-          if (!html.includes('does not exist') && !html.includes('Not Found') && html.length > 5000) {
+          // Check if archive actually has content
+          if (!html.includes('does not exist') && 
+              !html.includes('Not Found') && 
+              !html.includes('404') &&
+              html.length > 5000) {
             archiveContent = html;
             console.log(`✅ Archive found at: ${archiveUrl}`);
             contentRetrieved = true;
@@ -73,7 +82,7 @@ app.get('/fetch', async (req, res) => {
           }
         }
       } catch (archiveError) {
-        console.log(`⚠️ Archive failed: ${archiveUrl}`);
+        console.log(`⚠️ Archive failed: ${archiveUrl} - ${archiveError.message}`);
       }
     }
 
@@ -81,7 +90,6 @@ app.get('/fetch', async (req, res) => {
     if (archiveContent) {
       console.log('📝 Cleaning archive content...');
       
-      // We need to launch browser to clean the archive content properly
       const response = await connect({
         headless: false,
         turnstile: true,
@@ -149,11 +157,12 @@ app.get('/fetch', async (req, res) => {
         // Remove images
         document.querySelectorAll('img').forEach(el => el.remove());
         
-        // Extract main content - archives usually have it in a container
+        // Extract main content
         const contentSelectors = [
           '.article-content', '.post-content', '.story-content', '.content',
           'article', '.main-content', '.entry-content', '.story-body',
-          '.article-body', '#content', '.body-content'
+          '.article-body', '#content', '.body-content', '.ArticleBody',
+          '.article-body', '.story-body', '.post-body'
         ];
         
         let contentFound = false;
@@ -171,7 +180,7 @@ app.get('/fetch', async (req, res) => {
           }
         }
         
-        // If no content container found, try to find the largest text block
+        // If no content container found, show all paragraphs
         if (!contentFound) {
           const paragraphs = document.querySelectorAll('p');
           if (paragraphs.length > 3) {
@@ -181,6 +190,9 @@ app.get('/fetch', async (req, res) => {
             });
           }
         }
+        
+        // Remove any remaining overlays
+        document.querySelectorAll('[class*="paywall"], [class*="subscription"]').forEach(el => el.remove());
       });
 
       const cleanHtml = await page.content();
@@ -269,7 +281,16 @@ app.get('/fetch', async (req, res) => {
     // Block tracking and paywall scripts
     await page.setRequestInterception(true);
     page.on('request', (req) => {
+      const resourceType = req.resourceType();
       const url = req.url().toLowerCase();
+      
+      // Block images to save memory
+      if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
+        req.abort();
+        return;
+      }
+      
+      // Block tracking and paywall scripts
       if (url.includes('paywall') || 
           url.includes('subscription') || 
           url.includes('cxense') ||
@@ -283,7 +304,9 @@ app.get('/fetch', async (req, res) => {
           url.includes('chartbeat') ||
           url.includes('scorecard') ||
           url.includes('comscore') ||
-          url.includes('quantcast')) {
+          url.includes('quantcast') ||
+          url.includes('adzerk') ||
+          url.includes('doubleclick')) {
         req.abort();
       } else {
         req.continue();
@@ -300,15 +323,6 @@ app.get('/fetch', async (req, res) => {
     // Wait for BPC
     console.log('⏳ Waiting for BPC to bypass paywall...');
     await wait(5000);
-
-    // Check if paywall is present
-    const hasPaywall = await page.evaluate(() => {
-      return document.querySelector('.paywall, .subscription-wall, [class*="paywall"], [class*="metered"]') !== null;
-    });
-
-    if (hasPaywall) {
-      console.log('⚠️ Paywall still present, applying bypasses...');
-    }
 
     // Apply bypasses
     console.log('🔧 Applying bypasses...');
@@ -329,6 +343,9 @@ app.get('/fetch', async (req, res) => {
       }
       if (url.includes('ft.com')) {
         document.cookie = "ft_subscriber=free; path=/; domain=.ft.com";
+      }
+      if (url.includes('economist.com')) {
+        document.cookie = "ec_subscriber=free; path=/; domain=.economist.com";
       }
       
       // Remove ALL paywall elements
@@ -370,7 +387,7 @@ app.get('/fetch', async (req, res) => {
       document.body.style.overflow = 'auto';
       document.documentElement.style.overflow = 'auto';
       
-      // Remove images
+      // Remove images (in case any slipped through)
       document.querySelectorAll('img').forEach(el => el.remove());
     });
 
@@ -419,5 +436,5 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`✅ BPC Extension path: ${EXTENSION_PATH}`);
   console.log(`⚠️ Memory limit: 512MB`);
-  console.log(`📚 Archive-first mode enabled`);
+  console.log(`📚 Archive-first mode enabled (web.archive.org only)`);
 });
