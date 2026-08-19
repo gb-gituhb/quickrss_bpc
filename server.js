@@ -130,6 +130,9 @@ app.get('/fetch', async (req, res) => {
       }
     }
 
+    // ============================================================
+    // PATH 1: ARCHIVE FOUND (No BPC needed)
+    // ============================================================
     if (archiveContent) {
       console.log('📝 Cleaning archive content...');
       const response = await connect({
@@ -190,8 +193,9 @@ app.get('/fetch', async (req, res) => {
         document.querySelectorAll('[class*="paywall"], [class*="subscription"]').forEach(el => el.remove());
       });
 
-      let cleanHtml = await page.content();
+      let finalHtml = await page.content();
       
+      // ===== KOREADER EXTRACTION (from ARCHIVE content) =====
       if (isKOReader) {
         const textContent = await page.evaluate(() => {
           const body = document.body;
@@ -214,11 +218,11 @@ app.get('/fetch', async (req, res) => {
           const textParts = [];
           const seen = new Set();
           let node;
+          const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
           while (node = walker.nextNode()) {
             const text = node.textContent.trim();
             if (text.length > 30 && !seen.has(text)) {
               seen.add(text);
-              const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
               let shouldSkip = false;
               for (const phrase of skipPhrases) {
                 if (text.includes(phrase)) { shouldSkip = true; break; }
@@ -241,8 +245,8 @@ app.get('/fetch', async (req, res) => {
         });
         const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
         const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
-        cleanHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}</style></head><body>${htmlBody}</body></html>`;
-        console.log('📝 Sending text-only version for KOReader');
+        finalHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}</style></head><body>${htmlBody || '<p>No content extracted</p>'}</body></html>`;
+        console.log('📝 Sending text-only version for KOReader (from archive)');
       }
 
       console.log('✅ Archive cleaned, returning response');
@@ -251,10 +255,12 @@ app.get('/fetch', async (req, res) => {
       forceGC();
       isProcessing = false;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.send(cleanHtml);
+      return res.send(finalHtml);
     }
 
-    // === FALLBACK TO BPC ===
+    // ============================================================
+    // PATH 2: ARCHIVE FAILED → FALLBACK TO BPC
+    // ============================================================
     console.log('📚 Archive failed, falling back to BPC...');
 
     const response = await connect({
@@ -365,7 +371,7 @@ app.get('/fetch', async (req, res) => {
 
     let htmlContent = await page.content();
     
-    // ===== IF KOREADER: Extract text only =====
+    // ===== KOREADER EXTRACTION (from BPC-PROCESSED page) =====
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
         const body = document.body;
@@ -388,11 +394,11 @@ app.get('/fetch', async (req, res) => {
         const textParts = [];
         const seen = new Set();
         let node;
+        const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
         while (node = walker.nextNode()) {
           const text = node.textContent.trim();
           if (text.length > 30 && !seen.has(text)) {
             seen.add(text);
-            const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
             let shouldSkip = false;
             for (const phrase of skipPhrases) {
               if (text.includes(phrase)) { shouldSkip = true; break; }
@@ -430,7 +436,7 @@ app.get('/fetch', async (req, res) => {
 ${htmlBody || '<p>No content extracted</p>'}
 </body>
 </html>`;
-      console.log('📝 Sending text-only version for KOReader');
+      console.log('📝 Sending text-only version for KOReader (from BPC)');
     } else {
       console.log('📝 Sending full HTML for browser');
     }
