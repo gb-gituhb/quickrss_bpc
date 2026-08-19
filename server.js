@@ -32,6 +32,35 @@ app.get('/fetch', async (req, res) => {
     return res.status(400).send('Missing url parameter.');
   }
 
+  // ===== RESILIENT URL CLEANING =====
+  // Fix malformed URLs from QuickRSS (e.g., "?step=3,https://...")
+  let cleanUrl = targetUrl;
+  
+  // Remove ?step=X, prefix
+  if (cleanUrl.includes('?step=')) {
+    cleanUrl = cleanUrl.replace(/^\?step=\d+,/, '');
+    console.log(`🔧 Cleaned URL from: ${targetUrl}`);
+    console.log(`🔧 To: ${cleanUrl}`);
+  }
+  
+  // Remove any other malformed prefixes (just in case)
+  // If URL contains "?step=3,https://", extract the https:// part
+  if (cleanUrl.includes('?step=3,https://')) {
+    const match = cleanUrl.match(/https?:\/\/[^\s]+/);
+    if (match) {
+      cleanUrl = match[0];
+      console.log(`🔧 Extracted URL from malformed string: ${cleanUrl}`);
+    }
+  }
+
+  // Validate URL
+  try {
+    new URL(cleanUrl);
+  } catch (e) {
+    console.error(`❌ Invalid URL after cleaning: ${cleanUrl}`);
+    return res.status(400).send('Invalid URL format.');
+  }
+
   if (isProcessing) {
     return res.status(429).send('Server is busy. Please retry.');
   }
@@ -40,15 +69,15 @@ app.get('/fetch', async (req, res) => {
   let browser, page;
 
   try {
-    console.log(`🌐 Fetching: ${targetUrl}`);
+    console.log(`🌐 Fetching: ${cleanUrl}`);
 
     // === ARCHIVE-FIRST STRATEGY ===
     console.log('📚 Trying archive-first approach...');
     
     const archiveUrls = [
-      `https://web.archive.org/web/2/${targetUrl}`,
-      `https://web.archive.org/web/20260819000000/${targetUrl}`,
-      `https://web.archive.org/web/20260818000000/${targetUrl}`
+      `https://web.archive.org/web/2/${cleanUrl}`,
+      `https://web.archive.org/web/20260819000000/${cleanUrl}`,
+      `https://web.archive.org/web/20260818000000/${cleanUrl}`
     ];
 
     let archiveContent = null;
@@ -182,7 +211,7 @@ app.get('/fetch', async (req, res) => {
       });
 
       const cleanHtml = await page.content();
-      console.log('✅ Archive cleaned, returning response');  // <-- ADDED
+      console.log('✅ Archive cleaned, returning response');
       
       await page.close().catch(() => {});
       await browser.close().catch(() => {});
@@ -293,11 +322,11 @@ app.get('/fetch', async (req, res) => {
     });
 
     console.log('⏳ Navigating...');
-    await page.goto(targetUrl, {
+    await page.goto(cleanUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 45000
     });
-    console.log('✅ Page loaded successfully');  // <-- ADDED
+    console.log('✅ Page loaded successfully');
 
     await wait(3000);
 
@@ -360,7 +389,7 @@ app.get('/fetch', async (req, res) => {
     await wait(3000);
 
     const htmlContent = await page.content();
-    console.log('✅ BPC content extracted, returning response');  // <-- ADDED
+    console.log('✅ BPC content extracted, returning response');
     
     await page.close().catch(() => {});
     await browser.close().catch(() => {});
