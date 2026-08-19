@@ -195,12 +195,8 @@ app.get('/fetch', async (req, res) => {
 
       let finalHtml = await page.content();
       
-      // ===== KOREADER EXTRACTION (from archive) =====
+      // ===== KOREADER: Send PLAIN TEXT (no HTML wrapper) =====
       if (isKOReader) {
-        // DEBUG: Log HTML length and check for "Continue Reading"
-        console.log(`📊 Archive HTML length: ${finalHtml.length}`);
-        console.log(`📊 Contains "Continue Reading": ${finalHtml.includes('Continue Reading')}`);
-        
         const textContent = await page.evaluate(() => {
           const body = document.body;
           if (!body) return '';
@@ -248,14 +244,14 @@ app.get('/fetch', async (req, res) => {
           return textParts.join('\n\n');
         });
         
-        // DEBUG: Log extracted text length
-        console.log(`📊 Extracted text length: ${textContent.length}`);
-        console.log(`📊 First 200 chars: ${textContent.substring(0, 200)}...`);
-        
-        const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
-        const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
-        finalHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}</style></head><body>${htmlBody || '<p>No content extracted</p>'}</body></html>`;
-        console.log('📝 Sending text-only version for KOReader (from archive)');
+        // Send PLAIN TEXT to KOReader
+        console.log(`📝 Sending plain text to KOReader (${textContent.length} chars)`);
+        await page.close().catch(() => {});
+        await browser.close().catch(() => {});
+        forceGC();
+        isProcessing = false;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.send(textContent);
       }
 
       console.log('✅ Archive cleaned, returning response');
@@ -341,7 +337,7 @@ app.get('/fetch', async (req, res) => {
     await wait(3000);
 
     // ============================================================
-    // THE FIX: CLICK "CONTINUE READING" TO LOAD FULL CONTENT
+    // CHECK FOR "Continue Reading" (just in case)
     // ============================================================
     try {
       const clicked = await page.evaluate(() => {
@@ -411,13 +407,9 @@ app.get('/fetch', async (req, res) => {
     let htmlContent = await page.content();
     
     // ============================================================
-    // KOREADER EXTRACTION (with TreeWalker filtering)
+    // KOREADER: Send PLAIN TEXT (no HTML wrapper)
     // ============================================================
     if (isKOReader) {
-      // DEBUG: Log HTML length and check for "Continue Reading"
-      console.log(`📊 BPC HTML length: ${htmlContent.length}`);
-      console.log(`📊 Contains "Continue Reading": ${htmlContent.includes('Continue Reading')}`);
-      
       const textContent = await page.evaluate(() => {
         const body = document.body;
         if (!body) return '';
@@ -465,28 +457,14 @@ app.get('/fetch', async (req, res) => {
         return textParts.join('\n\n');
       });
       
-      // DEBUG: Log extracted text length
-      console.log(`📊 Extracted text length: ${textContent.length}`);
-      console.log(`📊 First 200 chars: ${textContent.substring(0, 200)}...`);
-      
-      const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
-      const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
-      htmlContent = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Article</title>
-  <style>
-    body { font-family: Georgia, serif; max-width: 700px; margin: 0 auto; padding: 20px; line-height: 1.8; font-size: 18px; color: #000; background: #fff; }
-    p { margin: 0 0 1.2em 0; text-align: justify; }
-  </style>
-</head>
-<body>
-${htmlBody || '<p>No content extracted</p>'}
-</body>
-</html>`;
-      console.log('📝 Sending text-only version for KOReader (from BPC)');
+      // Send PLAIN TEXT to KOReader
+      console.log(`📝 Sending plain text to KOReader (${textContent.length} chars)`);
+      await page.close().catch(() => {});
+      await browser.close().catch(() => {});
+      forceGC();
+      isProcessing = false;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return res.send(textContent);
     } else {
       console.log('📝 Sending full HTML for browser');
     }
