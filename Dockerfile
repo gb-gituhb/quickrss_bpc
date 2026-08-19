@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Clone the native BPC extension directly via Git instead of downloading a ZIP
+# Clone the native BPC extension into the container
 RUN git clone https://gitflic.ru/project/magnolia1234/bypass-paywalls-chrome-clean.git bpc_extension/bypass-paywalls-chrome-clean-master
 
 COPY package*.json ./
