@@ -1,15 +1,12 @@
 {
   "name": "quickrss-bpc-proxy",
   "version": "1.0.0",
-  "description": "Puppeteer proxy service with BPC",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "xvfb-run --auto-servernum --server-args=\"-screen 0 1280x720x24\" node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "puppeteer": "^22.6.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-real-browser": "^1.3.17"
   }
 }
