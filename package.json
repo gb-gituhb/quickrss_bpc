@@ -1,15 +1,15 @@
 {
-  "name": "quickrss-bpc",
+  "name": "quickrss-bpc-proxy",
   "version": "1.0.0",
-  "description": "Bypass Paywalls Clean Proxy",
+  "description": "Puppeteer proxy service with BPC",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "puppeteer": "^22.0.0",
-    "puppeteer-extra": "^3.3.6",
+    "puppeteer": "^22.6.0",
+    "puppeteer-extra": "^4.2.0",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }
