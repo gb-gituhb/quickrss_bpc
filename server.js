@@ -8,7 +8,6 @@ puppeteer.use(StealthPlugin());
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Points to the BPC extension directory inside the container
 const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-chrome-clean-master');
 
 // Root route handler to completely eliminate base URL 404 errors
