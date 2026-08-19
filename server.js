@@ -194,32 +194,54 @@ app.get('/fetch', async (req, res) => {
       
       if (isKOReader) {
         const textContent = await page.evaluate(() => {
-          const allElements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, span, article, section, .content, .article-body, .story-body');
-          let text = '';
-          const seen = new Set();
-          const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more'];
-          allElements.forEach(el => {
-            if (el.children.length > 0) return;
-            const content = el.textContent ? el.textContent.trim() : '';
-            if (content && content.length > 20 && !seen.has(content)) {
-              let shouldSkip = false;
-              for (const phrase of skipPhrases) {
-                if (content.includes(phrase)) { shouldSkip = true; break; }
-              }
-              if (!shouldSkip) {
-                seen.add(content);
-                const tag = el.tagName.toLowerCase();
-                if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
-                  text += `<${tag}>${content}</${tag}>`;
-                } else {
-                  text += `<p>${content}</p>`;
+          const body = document.body;
+          if (!body) return '';
+          const walker = document.createTreeWalker(
+            body,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: function(node) {
+                const parent = node.parentElement;
+                if (!parent) return NodeFilter.FILTER_REJECT;
+                const tag = parent.tagName.toLowerCase();
+                if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg') {
+                  return NodeFilter.FILTER_REJECT;
                 }
+                return NodeFilter.FILTER_ACCEPT;
               }
             }
-          });
-          return text;
+          );
+          const textParts = [];
+          const seen = new Set();
+          let node;
+          while (node = walker.nextNode()) {
+            const text = node.textContent.trim();
+            if (text.length > 30 && !seen.has(text)) {
+              seen.add(text);
+              const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
+              let shouldSkip = false;
+              for (const phrase of skipPhrases) {
+                if (text.includes(phrase)) { shouldSkip = true; break; }
+              }
+              if (!shouldSkip) {
+                textParts.push(text);
+              }
+            }
+          }
+          if (textParts.length === 0) {
+            document.querySelectorAll('p').forEach(p => {
+              const text = p.textContent.trim();
+              if (text.length > 30 && !seen.has(text)) {
+                seen.add(text);
+                textParts.push(text);
+              }
+            });
+          }
+          return textParts.join('\n\n');
         });
-        cleanHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}h1,h2,h3{margin:1.2em 0 0.5em 0}</style></head><body>${textContent}</body></html>`;
+        const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
+        const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+        cleanHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{font-family:Georgia,serif;max-width:700px;margin:0 auto;padding:20px;line-height:1.8;font-size:18px;color:#000;background:#fff}p{margin:0 0 1.2em 0;text-align:justify}</style></head><body>${htmlBody}</body></html>`;
         console.log('📝 Sending text-only version for KOReader');
       }
 
@@ -346,32 +368,53 @@ app.get('/fetch', async (req, res) => {
     // ===== IF KOREADER: Extract text only =====
     if (isKOReader) {
       const textContent = await page.evaluate(() => {
-        const allElements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, span, article, section, .content, .article-body, .story-body');
-        let text = '';
-        const seen = new Set();
-        const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more'];
-        allElements.forEach(el => {
-          if (el.children.length > 0) return;
-          const content = el.textContent ? el.textContent.trim() : '';
-          if (content && content.length > 20 && !seen.has(content)) {
-            let shouldSkip = false;
-            for (const phrase of skipPhrases) {
-              if (content.includes(phrase)) { shouldSkip = true; break; }
-            }
-            if (!shouldSkip) {
-              seen.add(content);
-              const tag = el.tagName.toLowerCase();
-              if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
-                text += `<${tag}>${content}</${tag}>`;
-              } else {
-                text += `<p>${content}</p>`;
+        const body = document.body;
+        if (!body) return '';
+        const walker = document.createTreeWalker(
+          body,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: function(node) {
+              const parent = node.parentElement;
+              if (!parent) return NodeFilter.FILTER_REJECT;
+              const tag = parent.tagName.toLowerCase();
+              if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'svg') {
+                return NodeFilter.FILTER_REJECT;
               }
+              return NodeFilter.FILTER_ACCEPT;
             }
           }
-        });
-        return text;
+        );
+        const textParts = [];
+        const seen = new Set();
+        let node;
+        while (node = walker.nextNode()) {
+          const text = node.textContent.trim();
+          if (text.length > 30 && !seen.has(text)) {
+            seen.add(text);
+            const skipPhrases = ['Continue Reading', 'Continue reading', 'Read more', 'Sign up', 'Subscribe', 'Newsletter', 'Cookie Notice', 'Privacy Policy', 'Terms of Service', 'Advertise', 'Follow us', 'Share this', 'Email', 'Print', 'Download', 'View all', 'Show more', 'Load more', 'By clicking', 'I agree', 'Accept', 'Decline', 'All rights reserved', 'Copyright', 'Get the app'];
+            let shouldSkip = false;
+            for (const phrase of skipPhrases) {
+              if (text.includes(phrase)) { shouldSkip = true; break; }
+            }
+            if (!shouldSkip) {
+              textParts.push(text);
+            }
+          }
+        }
+        if (textParts.length === 0) {
+          document.querySelectorAll('p').forEach(p => {
+            const text = p.textContent.trim();
+            if (text.length > 30 && !seen.has(text)) {
+              seen.add(text);
+              textParts.push(text);
+            }
+          });
+        }
+        return textParts.join('\n\n');
       });
-      
+      const paragraphs = textContent.split('\n\n').filter(p => p.trim().length > 0);
+      const htmlBody = paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
       htmlContent = `<!DOCTYPE html>
 <html>
 <head>
@@ -381,11 +424,10 @@ app.get('/fetch', async (req, res) => {
   <style>
     body { font-family: Georgia, serif; max-width: 700px; margin: 0 auto; padding: 20px; line-height: 1.8; font-size: 18px; color: #000; background: #fff; }
     p { margin: 0 0 1.2em 0; text-align: justify; }
-    h1, h2, h3 { margin: 1.2em 0 0.5em 0; }
   </style>
 </head>
 <body>
-${textContent || '<p>No content extracted</p>'}
+${htmlBody || '<p>No content extracted</p>'}
 </body>
 </html>`;
       console.log('📝 Sending text-only version for KOReader');
