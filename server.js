@@ -9,7 +9,6 @@ const EXTENSION_PATH = path.join(__dirname, 'bpc_extension', 'bypass-paywalls-ch
 let isProcessing = false;
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Force garbage collection
 const forceGC = () => {
   if (global.gc) {
     try {
@@ -73,7 +72,7 @@ app.get('/fetch', async (req, res) => {
         '--use-mock-keychain',
         '--disable-web-security',
         '--disable-features=BlockInsecurePrivateNetworkRequests',
-        '--disable-jit', // Reduce memory
+        '--disable-jit',
         '--disable-accelerated-2d-canvas',
         '--disable-accelerated-jpeg-decoding',
         '--disable-accelerated-mjpeg-decode',
@@ -92,67 +91,109 @@ app.get('/fetch', async (req, res) => {
     browser = response.browser;
     page = response.page;
 
-    // Wait for extension
     await wait(2000);
 
-    // Minimal bypass - just the essentials
+    // === bpc-fetch: User-Agent ===
     await page.setUserAgent('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+
+    // === bpc-fetch: Google Referer (NEW) ===
+    await page.setExtraHTTPHeaders({
+      'Referer': 'https://www.google.com/'
+    });
 
     // Basic stealth
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
 
-    // Minimal request blocking
+    // === bpc-fetch: Comprehensive Script Blocking (UPDATED) ===
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       const url = req.url().toLowerCase();
-      // Block ONLY paywall scripts to save memory
-      if (url.includes('paywall') || url.includes('subscription') || url.includes('cxense')) {
+      // Block ALL tracking and paywall scripts
+      if (url.includes('paywall') || 
+          url.includes('subscription') || 
+          url.includes('cxense') ||
+          url.includes('google-analytics') ||
+          url.includes('googletagmanager') ||
+          url.includes('facebook') ||
+          url.includes('segment') ||
+          url.includes('optimizely') ||
+          url.includes('abtest') ||
+          url.includes('analytics') ||
+          url.includes('chartbeat') ||
+          url.includes('scorecard') ||
+          url.includes('comscore') ||
+          url.includes('quantcast')) {
         req.abort();
       } else {
         req.continue();
       }
     });
 
-    // Navigate with shorter timeout
+    // Navigate
     console.log('⏳ Navigating...');
     await page.goto(targetUrl, {
-      waitUntil: 'domcontentloaded', // Faster than networkidle2
+      waitUntil: 'domcontentloaded',
       timeout: 30000
     });
 
     await wait(2000);
 
-    // Simplified bypass
+    // === bpc-fetch: Combined Bypass ===
     await page.evaluate(() => {
       const url = window.location.href;
       
       // Set essential cookies
       if (url.includes('nytimes.com')) {
         document.cookie = "nyt_cc=bypass; path=/; domain=.nytimes.com";
+        document.cookie = "nyt_metered=0; path=/; domain=.nytimes.com";
       }
       if (url.includes('wsj.com')) {
         document.cookie = "wsj_cc=bypass; path=/; domain=.wsj.com";
+        document.cookie = "wsj_article_access=free; path=/; domain=.wsj.com";
       }
       if (url.includes('bloomberg.com')) {
         document.cookie = "bb_article_access=free; path=/; domain=.bloomberg.com";
       }
+      if (url.includes('ft.com')) {
+        document.cookie = "ft_subscriber=free; path=/; domain=.ft.com";
+      }
       
-      // Remove paywall overlays
-      document.querySelectorAll('.paywall, .subscription-wall, [class*="paywall"]').forEach(el => el.remove());
+      // Remove ALL paywall elements
+      const overlaySelectors = [
+        '.paywall', '.subscription-wall', '.premium-wall', '.metered-content',
+        '.gateway', '.wsj-paywall', '.bloomberg-paywall', '.ft-paywall',
+        '[class*="paywall"]', '[id*="paywall"]', '[class*="metered"]'
+      ];
+      overlaySelectors.forEach(selector => {
+        document.querySelectorAll(selector).forEach(el => el.remove());
+      });
       
-      // Unhide content
-      document.querySelectorAll('.article-content, .story-content, .content, article p').forEach(el => {
-        el.style.display = 'block';
-        el.style.visibility = 'visible';
-        el.style.maxHeight = 'none';
+      // Unhide ALL content
+      const contentSelectors = [
+        '.article-content', '.post-content', '.story-content', '.content',
+        '.premium-content', 'article p', '.article-body', '.entry-content'
+      ];
+      contentSelectors.forEach(selector => {
+        document.querySelectorAll(selector).forEach(el => {
+          el.style.display = 'block';
+          el.style.visibility = 'visible';
+          el.style.opacity = '1';
+          el.style.maxHeight = 'none';
+          el.style.overflow = 'visible';
+        });
       });
       
       // Remove blur
       document.querySelectorAll('[style*="blur"]').forEach(el => {
         el.style.filter = 'none';
+        el.style.backdropFilter = 'none';
       });
+      
+      // Restore scrolling
+      document.body.style.overflow = 'auto';
+      document.documentElement.style.overflow = 'auto';
       
       // Remove images
       document.querySelectorAll('img').forEach(el => el.remove());
@@ -160,9 +201,36 @@ app.get('/fetch', async (req, res) => {
 
     await wait(3000);
 
+    // === bpc-fetch: Check if paywall remains ===
+    const hasPaywall = await page.evaluate(() => {
+      return document.querySelector('.paywall, .subscription-wall, [class*="paywall"]') !== null;
+    });
+
+    // === bpc-fetch: Archive Fallback (NEW) ===
+    if (hasPaywall) {
+      console.log('⚠️ Paywall detected, trying archive fallback...');
+      const archiveUrl = `https://archive.is/latest/${targetUrl}`;
+      
+      try {
+        await page.goto(archiveUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 15000
+        });
+        
+        await wait(2000);
+        
+        // Extract content from archive
+        await page.evaluate(() => {
+          document.querySelectorAll('[class*="ad"], img, [class*="popup"]').forEach(el => el.remove());
+        });
+      } catch (archiveError) {
+        console.log('⚠️ Archive fallback failed');
+      }
+    }
+
     const htmlContent = await page.content();
     
-    // Aggressive cleanup
+    // Cleanup
     await page.close().catch(() => {});
     await browser.close().catch(() => {});
     forceGC();
@@ -185,7 +253,6 @@ app.get('/fetch', async (req, res) => {
   }
 });
 
-// Periodic memory cleanup
 setInterval(forceGC, 30000);
 
 app.listen(PORT, () => {
