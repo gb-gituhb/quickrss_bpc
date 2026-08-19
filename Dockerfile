@@ -31,9 +31,9 @@ COPY package*.json ./
 
 RUN npm install
 
-# Download the complete repository archive ensuring full extension source files are present
+# Pull the extension source archive directly from GitFlic
 RUN mkdir -p bpc_extension && \
-    wget -O bpc.zip https://codeload.github.com/bpc-clone/bypass-paywalls-chrome-clean/zip/refs/heads/master && \
+    wget -O bpc.zip https://gitflic.ru/project/magnolia1234/bypass-paywalls-chrome-clean/archive/master.zip && \
     unzip bpc.zip -d bpc_extension/ && \
     rm bpc.zip
 
