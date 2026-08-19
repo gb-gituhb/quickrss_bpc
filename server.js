@@ -35,6 +35,12 @@ app.get('/fetch', async (req, res) => {
   // ===== AGGRESSIVE URL CLEANING =====
   let cleanUrl = targetUrl;
 
+  // SAFETY: Ensure it's a string
+  if (typeof cleanUrl !== 'string') {
+    console.error(`❌ URL is not a string: ${typeof cleanUrl}`);
+    cleanUrl = String(cleanUrl || '');
+  }
+
   // Log the raw URL for debugging
   console.log(`📝 Raw URL: ${cleanUrl}`);
 
@@ -54,7 +60,11 @@ app.get('/fetch', async (req, res) => {
   }
 
   // Handle URL-encoded characters
-  cleanUrl = decodeURIComponent(cleanUrl);
+  try {
+    cleanUrl = decodeURIComponent(cleanUrl);
+  } catch (e) {
+    console.log(`⚠️ URL decode failed, using original: ${e.message}`);
+  }
 
   // Remove any trailing commas or spaces
   cleanUrl = cleanUrl.replace(/[,\s]+$/, '');
