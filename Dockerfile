@@ -2,6 +2,7 @@ FROM node:18-slim
 
 RUN apt-get update && apt-get install -y \
     chromium \
+    xvfb \
     ca-certificates \
     fonts-liberation \
     libappindicator3-1 \
@@ -26,9 +27,7 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
 COPY package*.json ./
-
 RUN npm install
 
 RUN mkdir -p bpc_extension && \
@@ -37,7 +36,6 @@ RUN mkdir -p bpc_extension && \
     rm bpc.zip
 
 COPY . .
-
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["npm", "start"]
